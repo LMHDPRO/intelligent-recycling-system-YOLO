@@ -1,8 +1,10 @@
 """
-Tab de Detección v3.1 — layout fix:
-  • Panel derecho con ancho fijo (290px) usando QSplitter
-  • ScrollArea funcional con contenido compacto
-  • Grupos de máquina reorganizados para caber bien
+Tab de Detección v3.4 — UI Pro Layout:
+  • Slicer principal (QSplitter) con proporción 3/5 y 2/5
+  • Galería inferior para últimas 5 capturas
+  • Controles de la derecha balanceados (-10% altura)
+  • Panel ESP32 vinculado al START/STOP (deshabilitado en idle)
+  • Atajos de teclado E-STOP ocultos pero funcionales
 """
 import os
 import cv2
@@ -18,7 +20,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSplitter
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui  import QFont
+from PySide6.QtGui  import QFont, QShortcut, QKeySequence, QImage, QPixmap
 
 from core.yolo_worker    import YOLOWorker
 from core.serial_manager import SerialManager
@@ -31,21 +33,21 @@ class _USBar(QWidget):
     def __init__(self, title: str):
         super().__init__()
         lay = QVBoxLayout(self)
-        lay.setSpacing(1)
+        lay.setSpacing(2)
         lay.setContentsMargins(0, 0, 0, 0)
         t = QLabel(title)
-        t.setStyleSheet("color:#8b949e; font-size:9px;")
+        t.setStyleSheet("color:#8b949e; font-size:10px;")
         t.setAlignment(Qt.AlignCenter)
         self._bar = QProgressBar()
         self._bar.setRange(0, self.MAX_CM)
         self._bar.setValue(0)
         self._bar.setTextVisible(False)
-        self._bar.setFixedHeight(7)
+        self._bar.setFixedHeight(8) # Reducido
         self._bar.setStyleSheet(_BAR.format(c="#00d4aa"))
         self._lbl = QLabel("—")
         self._lbl.setAlignment(Qt.AlignCenter)
         self._lbl.setStyleSheet(
-            "color:#c9d1d9; font-size:10px; font-family:Consolas;")
+            "color:#c9d1d9; font-size:11px; font-family:Consolas;")
         lay.addWidget(t)
         lay.addWidget(self._bar)
         lay.addWidget(self._lbl)
@@ -87,15 +89,15 @@ class DetectionTab(QWidget):
     # ──────────────────────────────────────────────────────────────────────
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setSpacing(6)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(4)
+        root.setContentsMargins(6, 6, 6, 6)
 
         # ── Barra superior: START + modo ──────────────────────────────────
         top = QHBoxLayout()
         top.setSpacing(8)
 
         self.btn_start = QPushButton("▶  START DETECCIÓN")
-        self.btn_start.setFixedHeight(40)
+        self.btn_start.setFixedHeight(32) # Reducido
         self.btn_start.setEnabled(False)
         self.btn_start.setStyleSheet(BTN_START_OFF)
 
@@ -121,20 +123,21 @@ class DetectionTab(QWidget):
 
         top.addWidget(self.btn_start, stretch=1)
         top.addWidget(mode_box)
-        root.addLayout(top)
+        root.addLayout(top, 0) 
 
-        # ── Splitter horizontal: video | panel ────────────────────────────
+        # ── Slicer Horizontal: [Cámara + Galería] | [Controles] ───────────
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(4)
+        splitter.setHandleWidth(5)
         splitter.setStyleSheet("""
-            QSplitter::handle { background:#21262d; }
+            QSplitter::handle { background:#21262d; border-radius:2px; }
+            QSplitter::handle:hover { background:#30363d; }
         """)
 
-        # ── Izquierda: video ──────────────────────────────────────────────
+        # ── ZONA IZQUIERDA: Cámara + Info + Galería ───────────────────────
         left_w = QWidget()
         left_l = QVBoxLayout(left_w)
         left_l.setContentsMargins(0, 0, 0, 0)
-        left_l.setSpacing(4)
+        left_l.setSpacing(6)
 
         self.video = VideoLabel("📷  Conecta la cámara y carga un modelo")
         self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -144,13 +147,14 @@ class DetectionTab(QWidget):
         self.label_info.setFixedHeight(24)
         self.label_info.setStyleSheet(INFO_IDLE)
 
-        left_l.addWidget(self.video)
-        left_l.addWidget(self.label_info)
+        left_l.addWidget(self.video, stretch=1)
+        left_l.addWidget(self.label_info, stretch=0)
+        left_l.addWidget(self._build_gallery(), stretch=0)
 
-        # ── Derecha: panel con scroll ─────────────────────────────────────
+        # ── ZONA DERECHA: Controles con scroll ────────────────────────────
         right_w = QWidget()
-        right_w.setFixedWidth(290)
-        right_w.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        right_w.setMinimumWidth(320) 
+        right_w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -164,8 +168,8 @@ class DetectionTab(QWidget):
 
         inner = QWidget()
         inner_l = QVBoxLayout(inner)
-        inner_l.setSpacing(6)
-        inner_l.setContentsMargins(4, 2, 4, 4)
+        inner_l.setSpacing(6) # Reducido
+        inner_l.setContentsMargins(6, 4, 6, 6) 
 
         inner_l.addWidget(self._grp_model())
         inner_l.addWidget(self._grp_thresholds())
@@ -183,22 +187,58 @@ class DetectionTab(QWidget):
 
         splitter.addWidget(left_w)
         splitter.addWidget(right_w)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        splitter.setSizes([9999, 290])
+        splitter.setStretchFactor(0, 3) 
+        splitter.setStretchFactor(1, 2) 
+        splitter.setSizes([600, 400])   
 
-        root.addWidget(splitter)
+        root.addWidget(splitter, 1)
 
-    # ── Grupos ────────────────────────────────────────────────────────────
+    # ── Galería Inferior ──────────────────────────────────────────────────
+    def _build_gallery(self) -> QGroupBox:
+        g = QGroupBox("🖼️  Últimas capturas guardadas")
+        g.setStyleSheet(GS)
+        g.setFixedHeight(110) 
+        lay = QHBoxLayout(g)
+        lay.setSpacing(8)
+        lay.setContentsMargins(8, 16, 8, 8)
+        
+        self.gallery_labels = []
+        for i in range(5):
+            lbl = QLabel("Sin\ndatos")
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("background:#0d1117; border:1px dashed #30363d; border-radius:4px; color:#484f58; font-size:10px;")
+            lbl.setScaledContents(True)
+            self.gallery_labels.append(lbl)
+            lay.addWidget(lbl)
+            
+        return g
+
+    def _add_to_gallery(self, frame: np.ndarray):
+        for i in range(len(self.gallery_labels) - 1, 0, -1):
+            pixmap = self.gallery_labels[i-1].pixmap()
+            if pixmap:
+                self.gallery_labels[i].setPixmap(pixmap)
+                
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
+        pix = QPixmap.fromImage(img)
+        
+        self.gallery_labels[0].setStyleSheet("background:#000; border:1px solid #58a6ff; border-radius:4px;")
+        self.gallery_labels[0].setPixmap(pix)
+
+    # ── Grupos de la Derecha ──────────────────────────────────────────────
     def _grp_model(self) -> QGroupBox:
         g = QGroupBox("🧠  Modelo YOLO"); g.setStyleSheet(GS)
-        l = QVBoxLayout(g); l.setSpacing(4)
+        l = QVBoxLayout(g); l.setSpacing(6)
         self.label_model = QLabel("Sin modelo cargado")
         self.label_model.setWordWrap(True)
         self.label_model.setStyleSheet("color:#484f58; font-size:10px;")
         self.btn_load   = QPushButton("📂  Cargar modelo (.pt)")
+        self.btn_load.setFixedHeight(26) # Reducido
         self.btn_load.setStyleSheet(BTN_PRIMARY)
         self.btn_unload = QPushButton("✕  Descargar")
+        self.btn_unload.setFixedHeight(24) # Reducido
         self.btn_unload.setEnabled(False)
         l.addWidget(self.label_model)
         l.addWidget(self.btn_load)
@@ -207,8 +247,8 @@ class DetectionTab(QWidget):
 
     def _grp_thresholds(self) -> QGroupBox:
         g = QGroupBox("⚙️  Umbrales"); g.setStyleSheet(GS)
-        l = QFormLayout(g); l.setSpacing(5)
-        l.setContentsMargins(8, 6, 8, 6)
+        l = QFormLayout(g); l.setSpacing(6)
+        l.setContentsMargins(10, 6, 10, 6)
 
         self.slider_conf = QSlider(Qt.Horizontal)
         self.slider_conf.setRange(1, 99); self.slider_conf.setValue(50)
@@ -227,10 +267,10 @@ class DetectionTab(QWidget):
 
     def _grp_ultrasonics(self) -> QGroupBox:
         g = QGroupBox("📡  Ultrasónicos"); g.setStyleSheet(GS)
-        l = QVBoxLayout(g); l.setSpacing(4)
-        l.setContentsMargins(8, 6, 8, 6)
+        l = QVBoxLayout(g); l.setSpacing(6)
+        l.setContentsMargins(10, 6, 10, 6)
 
-        bars = QHBoxLayout(); bars.setSpacing(8)
+        bars = QHBoxLayout(); bars.setSpacing(12)
         self.us1 = _USBar("US1  Entrada")
         self.us2 = _USBar("US2  Cámara")
         bars.addWidget(self.us1); bars.addWidget(self.us2)
@@ -240,7 +280,7 @@ class DetectionTab(QWidget):
         ev_row.addWidget(QLabel("Evento:"))
         self.label_event = QLabel("—")
         self.label_event.setStyleSheet(
-            "color:#ffa500; font-weight:bold; font-size:10px;")
+            "color:#ffa500; font-weight:bold; font-size:11px;")
         ev_row.addWidget(self.label_event)
         ev_row.addStretch()
         l.addLayout(ev_row)
@@ -248,17 +288,17 @@ class DetectionTab(QWidget):
 
     def _grp_log(self) -> QGroupBox:
         g = QGroupBox("🔍  Log detecciones"); g.setStyleSheet(GS)
-        l = QVBoxLayout(g); l.setSpacing(3)
-        l.setContentsMargins(6, 6, 6, 6)
+        l = QVBoxLayout(g); l.setSpacing(4)
+        l.setContentsMargins(8, 6, 8, 6)
         self.det_log = QTextEdit()
         self.det_log.setReadOnly(True)
-        self.det_log.setFixedHeight(90)
+        self.det_log.setFixedHeight(65) # Reducido (-15px)
         self.det_log.setFont(QFont("Consolas", 9))
         self.det_log.setStyleSheet(
             "QTextEdit{background:#0d1117;color:#e6db74;"
             "border:1px solid #30363d;border-radius:4px;}")
         btn = QPushButton("Limpiar")
-        btn.setFixedHeight(20)
+        btn.setFixedHeight(22) # Reducido
         btn.clicked.connect(self.det_log.clear)
         l.addWidget(self.det_log); l.addWidget(btn)
         return g
@@ -266,44 +306,52 @@ class DetectionTab(QWidget):
     def _grp_save(self) -> QGroupBox:
         g = QGroupBox("💾  Guardar detecciones"); g.setStyleSheet(GS)
         l = QVBoxLayout(g); l.setSpacing(4)
-        l.setContentsMargins(8, 6, 8, 6)
+        l.setContentsMargins(10, 6, 10, 6)
         self.chk_autosave = QCheckBox("Auto-guardar imagen + JSON")
         self.chk_autosave.setStyleSheet("color:#c9d1d9; font-size:11px;")
-        row = QHBoxLayout(); row.setSpacing(4)
+        row = QHBoxLayout(); row.setSpacing(6)
         self.label_save_path = QLabel(self._save_folder)
         self.label_save_path.setStyleSheet(
-            "color:#58a6ff; font-size:9px;")
+            "color:#58a6ff; font-size:10px;")
         self.label_save_path.setWordWrap(True)
         self.btn_save_folder = QPushButton("📁")
-        self.btn_save_folder.setFixedSize(24, 24)
+        self.btn_save_folder.setFixedSize(24, 24) # Reducido
         row.addWidget(self.label_save_path, stretch=1)
         row.addWidget(self.btn_save_folder)
         self.label_saved = QLabel("Guardadas: 0")
-        self.label_saved.setStyleSheet("color:#8b949e; font-size:10px;")
+        self.label_saved.setStyleSheet("color:#8b949e; font-size:11px;")
         l.addWidget(self.chk_autosave)
         l.addLayout(row)
         l.addWidget(self.label_saved)
         return g
 
     def _grp_machine(self) -> QGroupBox:
-        g = QGroupBox("🤖  Máquina  —  ESP32"); g.setStyleSheet(GS)
+        # ── NUEVA LÓGICA: Se asigna a variable y se apaga por defecto ──
+        self.grp_machine_box = QGroupBox("🤖  Máquina  —  ESP32")
+        self.grp_machine_box.setStyleSheet(GS)
+        self.grp_machine_box.setEnabled(False) 
+        
+        g = self.grp_machine_box
         l = QVBoxLayout(g); l.setSpacing(4)
-        l.setContentsMargins(8, 6, 8, 8)
+        l.setContentsMargins(10, 6, 10, 8)
 
         # Banda
         l.addWidget(_sec("Banda  (NEMA17)"))
-        r1 = QHBoxLayout(); r1.setSpacing(4)
+        r1 = QHBoxLayout(); r1.setSpacing(6)
         self.btn_belt_on  = QPushButton("▶ ON");  self.btn_belt_on.setStyleSheet(BGRN)
         self.btn_belt_off = QPushButton("■ OFF"); self.btn_belt_off.setStyleSheet(BORG)
+        self.btn_belt_on.setFixedHeight(24)
+        self.btn_belt_off.setFixedHeight(24)
         r1.addWidget(self.btn_belt_on); r1.addWidget(self.btn_belt_off)
         l.addLayout(r1)
 
-        rs = QHBoxLayout(); rs.setSpacing(4)
+        rs = QHBoxLayout(); rs.setSpacing(6)
         self.sld_spd = QSlider(Qt.Horizontal)
         self.sld_spd.setRange(100, 3000); self.sld_spd.setValue(800)
         self.lbl_spd = QLabel("800"); self.lbl_spd.setFixedWidth(32)
         self.sld_spd.valueChanged.connect(lambda v: self.lbl_spd.setText(str(v)))
-        self.btn_spd_ok = QPushButton("OK"); self.btn_spd_ok.setFixedWidth(26)
+        self.btn_spd_ok = QPushButton("OK"); self.btn_spd_ok.setFixedWidth(28)
+        self.btn_spd_ok.setFixedHeight(22)
         rs.addWidget(QLabel("spd:")); rs.addWidget(self.sld_spd)
         rs.addWidget(self.lbl_spd); rs.addWidget(self.btn_spd_ok)
         l.addLayout(rs)
@@ -311,12 +359,12 @@ class DetectionTab(QWidget):
 
         # Sorting
         l.addWidget(_sec("Sorting  (NEMA17)"))
-        r2 = QHBoxLayout(); r2.setSpacing(4)
+        r2 = QHBoxLayout(); r2.setSpacing(6)
         self.btn_s0 = QPushButton("0");       self.btn_s0.setStyleSheet(BGRY)
         self.btn_s1 = QPushButton("1 BOT");   self.btn_s1.setStyleSheet(BBLU)
         self.btn_s2 = QPushButton("2 LATA");  self.btn_s2.setStyleSheet(BPUR)
         for b in (self.btn_s0, self.btn_s1, self.btn_s2):
-            b.setFixedHeight(26)
+            b.setFixedHeight(26) # Reducido
         r2.addWidget(self.btn_s0); r2.addWidget(self.btn_s1); r2.addWidget(self.btn_s2)
         l.addLayout(r2)
         self.btn_home = QPushButton("⌂  Home")
@@ -324,24 +372,19 @@ class DetectionTab(QWidget):
         l.addWidget(self.btn_home)
         l.addWidget(_sep())
 
-        # Servos — 2 filas compactas
+        # Servos
         l.addWidget(_sec("Servos"))
         for idx, (attr_o, attr_c) in enumerate(
                 [("btn_s1o", "btn_s1c"), ("btn_s2o", "btn_s2c")], start=1):
-            row = QHBoxLayout(); row.setSpacing(4)
+            row = QHBoxLayout(); row.setSpacing(6)
             row.addWidget(QLabel(f"S{idx}:"))
             bo = QPushButton("↕ Open");  bo.setStyleSheet(BGRN); bo.setFixedHeight(24)
             bc = QPushButton("⊟ Close"); bc.setStyleSheet(BORG); bc.setFixedHeight(24)
             setattr(self, attr_o, bo); setattr(self, attr_c, bc)
             row.addWidget(bo); row.addWidget(bc)
             l.addLayout(row)
-        l.addWidget(_sep())
-
-        # E-STOP
-        self.btn_estop = QPushButton("🛑  PARO DE EMERGENCIA")
-        self.btn_estop.setFixedHeight(34)
-        self.btn_estop.setStyleSheet(BESTOP)
-        l.addWidget(self.btn_estop)
+            
+        # El botón rojo de E-STOP fue eliminado visualmente
         return g
 
     # ──────────────────────────────────────────────────────────────────────
@@ -378,7 +421,13 @@ class DetectionTab(QWidget):
         self.btn_s1c.clicked.connect(self._serial.servo1_close)
         self.btn_s2o.clicked.connect(self._serial.servo2_open)
         self.btn_s2c.clicked.connect(self._serial.servo2_close)
-        self.btn_estop.clicked.connect(self._serial.emergency_stop)
+
+        # ── Atajos de teclado para Paro de Emergencia ocultos ──
+        self.shortcut_space = QShortcut(QKeySequence(Qt.Key_Space), self)
+        self.shortcut_space.activated.connect(self._serial.emergency_stop)
+
+        self.shortcut_esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self.shortcut_esc.activated.connect(self._serial.emergency_stop)
 
     # ── Slots públicos ────────────────────────────────────────────────────
     def receive_frame(self, frame: np.ndarray):
@@ -412,6 +461,10 @@ class DetectionTab(QWidget):
         self.btn_start.setStyleSheet(BTN_START_ON)
         self.radio_auto.setEnabled(False)
         self.radio_manual.setEnabled(False)
+        
+        # ── ACTIVAR ESP32 ──
+        self.grp_machine_box.setEnabled(True)
+
         mode = "AUTO 🤖" if self._auto else "MANUAL 🖐"
         self.label_info.setText(f"▶  Detectando  |  Modo: {mode}")
         self.label_info.setStyleSheet(INFO_RUN)
@@ -424,6 +477,11 @@ class DetectionTab(QWidget):
         self.btn_start.setStyleSheet(BTN_START_OFF)
         self.radio_auto.setEnabled(True)
         self.radio_manual.setEnabled(True)
+        
+        # ── DESACTIVAR ESP32 Y MANDAR PARO ──
+        self.grp_machine_box.setEnabled(False)
+        self._serial.emergency_stop() 
+
         self.label_info.setText("Estado: idle  |  Detecciones: —")
         self.label_info.setStyleSheet(INFO_IDLE)
         self.status_message.emit("■  Detección detenida")
@@ -493,6 +551,9 @@ class DetectionTab(QWidget):
                     for d in detections
                 ]
             }, f, indent=2)
+            
+        self._add_to_gallery(frame)
+        
         self._saved_count += 1
         self.label_saved.setText(f"Guardadas: {self._saved_count}")
         self.status_message.emit(f"💾  {base}.jpg")
@@ -520,7 +581,7 @@ class DetectionTab(QWidget):
 def _sec(text: str) -> QLabel:
     l = QLabel(text)
     l.setStyleSheet(
-        "color:#484f58; font-size:9px; margin-top:1px;")
+        "color:#484f58; font-size:10px; margin-top:2px;")
     return l
 
 def _sep() -> QFrame:
@@ -530,17 +591,17 @@ def _sep() -> QFrame:
 
 # ─── Estilos ─────────────────────────────────────────────────────────────
 GS = """
-QGroupBox { font-weight:bold; font-size:11px; color:#c9d1d9;
-            border:1px solid #30363d; border-radius:7px;
-            margin-top:6px; padding-top:5px; }
-QGroupBox::title { subcontrol-origin:margin; left:9px; padding:0 4px; }
+QGroupBox { font-weight:bold; font-size:12px; color:#c9d1d9;
+            border:1px solid #30363d; border-radius:8px;
+            margin-top:8px; padding-top:6px; padding-bottom:4px; }
+QGroupBox::title { subcontrol-origin:margin; left:10px; top:-2px; padding:0 4px; }
 """
-INFO_IDLE = ("color:#484f58; font-size:11px; font-family:Consolas; "
+INFO_IDLE = ("color:#484f58; font-size:12px; font-family:Consolas; "
              "background:#0d1117; border:1px solid #21262d; "
-             "border-radius:4px; padding:2px 6px;")
-INFO_RUN  = ("color:#00d4aa; font-size:11px; font-family:Consolas; "
+             "border-radius:4px; padding:4px 8px;")
+INFO_RUN  = ("color:#00d4aa; font-size:12px; font-family:Consolas; "
              "background:#0d1117; border:1px solid #00d4aa; "
-             "border-radius:4px; padding:2px 6px;")
+             "border-radius:4px; padding:4px 8px;")
 BTN_PRIMARY  = ("QPushButton{background:#1f6feb;color:#fff;border-radius:5px;"
                 "font-weight:bold;padding:4px;} QPushButton:hover{background:#388bfd;}")
 BTN_START_OFF = ("QPushButton{background:#196c2e;color:#fff;font-weight:bold;"
@@ -560,8 +621,3 @@ BBLU  = ("QPushButton{background:#1f6feb;color:#fff;border-radius:4px;}"
          "QPushButton:hover{background:#388bfd;}")
 BPUR  = ("QPushButton{background:#6e40c9;color:#fff;border-radius:4px;}"
          "QPushButton:hover{background:#8957e5;}")
-BESTOP = ("QPushButton{background:#b91c1c;color:#fff;font-weight:bold;"
-          "border-radius:6px;font-size:12px;}"
-          "QPushButton:hover{background:#ef4444;}")
-
-from PySide6.QtWidgets import QHBoxLayout

@@ -1,12 +1,12 @@
 <div align="center">
 
 ```
-██████╗ ███████╗ ██████╗██╗   ██╗ ██████╗██╗     ███████╗██████╗     ██╗   ██╗██╗███████╗██╗ ██████╗ ███╗   ██╗    
-██╔══██╗██╔════╝██╔════╝╚██╗ ██╔╝██╔════╝██║     ██╔════╝██╔══██╗    ██║   ██║██║██╔════╝██║██╔═══██╗████╗  ██║
-██████╔╝█████╗  ██║      ╚████╔╝ ██║     ██║     █████╗  ██████╔╝    ██║   ██║██║███████╗██║██║   ██║██╔██╗ ██║
-██╔══██╗██╔══╝  ██║       ╚██╔╝  ██║     ██║     ██╔══╝  ██╔══██╗    ╚██╗ ██╔╝██║╚════██║██║██║   ██║██║╚██╗██║
-██║  ██║███████╗╚██████╗   ██║   ╚██████╗███████╗███████╗██║  ██║     ╚████╔╝ ██║███████║██║╚██████╔╝██║ ╚████║
-╚═╝  ╚═╝╚══════╝ ╚═════╝   ╚═╝    ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═══╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+██████╗ ███████╗ ██████╗██╗   ██╗ ██████╗██╗     ███████╗██████╗    ██╗   ██╗██╗███████╗██╗ ██████╗ ███╗   ██╗
+██╔══██╗██╔════╝██╔════╝╚██╗ ██╔╝██╔════╝██║     ██╔════╝██╔══██╗   ██║   ██║██║██╔════╝██║██╔═══██╗████╗  ██║
+██████╔╝█████╗  ██║      ╚████╔╝ ██║     ██║     █████╗  ██████╔╝   ██║   ██║██║███████╗██║██║   ██║██╔██╗ ██║
+██╔══██╗██╔══╝  ██║       ╚██╔╝  ██║     ██║     ██╔══╝  ██╔══██╗   ╚██╗ ██╔╝██║╚════██║██║██║   ██║██║╚██╗██║
+██║  ██║███████╗╚██████╗   ██║   ╚██████╗███████╗███████╗██║  ██║    ╚████╔╝ ██║███████║██║╚██████╔╝██║ ╚████║
+╚═╝  ╚═╝╚══════╝ ╚═════╝   ╚═╝    ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝     ╚═══╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
 ```
 
 <br>
@@ -262,15 +262,19 @@ intelligent-recycling-system-YOLO/
 
 ## Equipo
 
+<div align="center">
+
 *Proyecto desarrollado en la* **Universidad Anáhuac Mayab** *— Mérida, Yucatán*
 
-|  | Nombre | |
-|---|---|---|
-| 🧑‍💻 | **José Pardiñaz** | [LinkedIn](https://www.linkedin.com/in/josepardinaz/) |
-| 🧑‍💻 | **William Monje** | [LinkedIn](https://www.linkedin.com/in/william-alejandro-monje-cano-1140a6242/) |
-| 🧑‍💻 | **Jesus Moreno** | [LinkedIn](https://www.linkedin.com/in/jesus-montero5420/) |
+<br>
 
-<div align="center">
+| 🧑‍💻 | Nombre | Perfil |
+|:---:|:---|:---:|
+| 🧑‍💻 | **José Pardiñaz** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/josepardinaz/) |
+| 🧑‍💻 | **William Monje** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/william-alejandro-monje-cano-1140a6242/) |
+| 🧑‍💻 | **Jesus Moreno** | [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/jesus-montero5420/) |
+
+<br>
 
 [![Anáhuac Mayab](https://img.shields.io/badge/Universidad_Anáhuac_Mayab-Mérida,_MX-D4111A?style=for-the-badge)](https://merida.anahuac.mx/)
 

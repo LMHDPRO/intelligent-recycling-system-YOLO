@@ -1,10 +1,9 @@
 """
-Tab de Detección v3.4 — UI Pro Layout:
+Tab de Detección v4.1 — Clean UI Layout:
   • Slicer principal (QSplitter) con proporción 3/5 y 2/5
-  • Galería inferior para últimas 5 capturas
-  • Controles de la derecha balanceados (-10% altura)
-  • Panel ESP32 vinculado al START/STOP (deshabilitado en idle)
-  • Atajos de teclado E-STOP ocultos pero funcionales
+  • Pipeline de modelos reubicado a una ventana flotante (PipelineDialog)
+  • UI lateral súper limpia y espaciosa
+  • Panel ESP32 vinculado al START/STOP
 """
 import os
 import cv2
@@ -22,9 +21,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui  import QFont, QShortcut, QKeySequence, QImage, QPixmap
 
-from core.yolo_worker    import YOLOWorker
-from core.serial_manager import SerialManager
-from ui.widgets          import VideoLabel
+from core.pipeline_worker import PipelineWorker, PipelineResult
+from core.serial_manager  import SerialManager
+from ui.widgets           import VideoLabel
+from ui.pipeline_panel    import PipelineDialog # ⬅️ AHORA IMPORTAMOS EL DIALOG
 
 
 # ─── Barra ultrasónico ────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ class _USBar(QWidget):
         self._bar.setRange(0, self.MAX_CM)
         self._bar.setValue(0)
         self._bar.setTextVisible(False)
-        self._bar.setFixedHeight(8) # Reducido
+        self._bar.setFixedHeight(8) 
         self._bar.setStyleSheet(_BAR.format(c="#00d4aa"))
         self._lbl = QLabel("—")
         self._lbl.setAlignment(Qt.AlignCenter)
@@ -67,15 +67,16 @@ class DetectionTab(QWidget):
     status_message = Signal(str)
 
     CLASS_SORT_MAP = {
-        "botella_con_tapa": 1,
-        "botella_sin_tapa": 1,
-        "lata":             2,
-        "ninguno":          0,
+        "botella":     1,
+        "lata":        2,
+        "desconocido": 0,
+        "ninguno":     0,
+        "—":           0
     }
 
-    def __init__(self, yolo: YOLOWorker, serial: SerialManager):
+    def __init__(self, worker: PipelineWorker, serial: SerialManager):
         super().__init__()
-        self._yolo   = yolo
+        self._worker = worker
         self._serial = serial
         self._running = False
         self._auto    = False
@@ -83,6 +84,7 @@ class DetectionTab(QWidget):
         self._save_folder  = os.path.join(os.getcwd(), "detections")
         self._saved_count  = 0
         self._last_frame: np.ndarray | None = None
+        self._pipeline_dlg = None # Referencia a la ventana flotante
         self._build_ui()
         self._connect_signals()
 
@@ -97,7 +99,7 @@ class DetectionTab(QWidget):
         top.setSpacing(8)
 
         self.btn_start = QPushButton("▶  START DETECCIÓN")
-        self.btn_start.setFixedHeight(32) # Reducido
+        self.btn_start.setFixedHeight(32)
         self.btn_start.setEnabled(False)
         self.btn_start.setStyleSheet(BTN_START_OFF)
 
@@ -139,7 +141,7 @@ class DetectionTab(QWidget):
         left_l.setContentsMargins(0, 0, 0, 0)
         left_l.setSpacing(6)
 
-        self.video = VideoLabel("📷  Conecta la cámara y carga un modelo")
+        self.video = VideoLabel("📷  Conecta la cámara y carga los modelos")
         self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.label_info = QLabel("Estado: idle  |  Detecciones: —")
@@ -168,11 +170,11 @@ class DetectionTab(QWidget):
 
         inner = QWidget()
         inner_l = QVBoxLayout(inner)
-        inner_l.setSpacing(6) # Reducido
+        inner_l.setSpacing(8)
         inner_l.setContentsMargins(6, 4, 6, 6) 
 
-        inner_l.addWidget(self._grp_model())
-        inner_l.addWidget(self._grp_thresholds())
+        # Añadimos los grupos (ya sin el armatoste de los 6 modelos)
+        inner_l.addWidget(self._grp_pipeline()) # ⬅️ Botón para abrir el panel
         inner_l.addWidget(self._grp_ultrasonics())
         inner_l.addWidget(self._grp_log())
         inner_l.addWidget(self._grp_save())
@@ -195,7 +197,7 @@ class DetectionTab(QWidget):
 
     # ── Galería Inferior ──────────────────────────────────────────────────
     def _build_gallery(self) -> QGroupBox:
-        g = QGroupBox("🖼️  Últimas capturas guardadas")
+        g = QGroupBox("🖼️  Últimas capturas analizadas")
         g.setStyleSheet(GS)
         g.setFixedHeight(110) 
         lay = QHBoxLayout(g)
@@ -228,41 +230,24 @@ class DetectionTab(QWidget):
         self.gallery_labels[0].setPixmap(pix)
 
     # ── Grupos de la Derecha ──────────────────────────────────────────────
-    def _grp_model(self) -> QGroupBox:
-        g = QGroupBox("🧠  Modelo YOLO"); g.setStyleSheet(GS)
-        l = QVBoxLayout(g); l.setSpacing(6)
-        self.label_model = QLabel("Sin modelo cargado")
-        self.label_model.setWordWrap(True)
-        self.label_model.setStyleSheet("color:#484f58; font-size:10px;")
-        self.btn_load   = QPushButton("📂  Cargar modelo (.pt)")
-        self.btn_load.setFixedHeight(26) # Reducido
-        self.btn_load.setStyleSheet(BTN_PRIMARY)
-        self.btn_unload = QPushButton("✕  Descargar")
-        self.btn_unload.setFixedHeight(24) # Reducido
-        self.btn_unload.setEnabled(False)
-        l.addWidget(self.label_model)
-        l.addWidget(self.btn_load)
-        l.addWidget(self.btn_unload)
-        return g
+    def _grp_pipeline(self) -> QGroupBox:
+        g = QGroupBox("🧠  Modelos YOLO en Cascada")
+        g.setStyleSheet(GS)
+        l = QVBoxLayout(g)
+        l.setSpacing(6)
+        l.setContentsMargins(10, 8, 10, 10)
 
-    def _grp_thresholds(self) -> QGroupBox:
-        g = QGroupBox("⚙️  Umbrales"); g.setStyleSheet(GS)
-        l = QFormLayout(g); l.setSpacing(6)
-        l.setContentsMargins(10, 6, 10, 6)
+        lbl = QLabel("Configura los modelos del pipeline y sus umbrales de detección.")
+        lbl.setStyleSheet("color:#8b949e; font-size:11px;")
+        lbl.setWordWrap(True)
 
-        self.slider_conf = QSlider(Qt.Horizontal)
-        self.slider_conf.setRange(1, 99); self.slider_conf.setValue(50)
-        self.label_conf  = QLabel("0.50"); self.label_conf.setFixedWidth(32)
-        r1 = QHBoxLayout()
-        r1.addWidget(self.slider_conf); r1.addWidget(self.label_conf)
-        l.addRow("Conf:", r1)
+        self.btn_open_pipe = QPushButton("⚙️  Configurar Pipeline...")
+        self.btn_open_pipe.setFixedHeight(30)
+        self.btn_open_pipe.setStyleSheet(BTN_PRIMARY)
+        self.btn_open_pipe.clicked.connect(self._show_pipeline_dialog)
 
-        self.slider_iou  = QSlider(Qt.Horizontal)
-        self.slider_iou.setRange(1, 99); self.slider_iou.setValue(45)
-        self.label_iou   = QLabel("0.45"); self.label_iou.setFixedWidth(32)
-        r2 = QHBoxLayout()
-        r2.addWidget(self.slider_iou); r2.addWidget(self.label_iou)
-        l.addRow("IOU:", r2)
+        l.addWidget(lbl)
+        l.addWidget(self.btn_open_pipe)
         return g
 
     def _grp_ultrasonics(self) -> QGroupBox:
@@ -287,18 +272,18 @@ class DetectionTab(QWidget):
         return g
 
     def _grp_log(self) -> QGroupBox:
-        g = QGroupBox("🔍  Log detecciones"); g.setStyleSheet(GS)
+        g = QGroupBox("🔍  Log del Pipeline"); g.setStyleSheet(GS)
         l = QVBoxLayout(g); l.setSpacing(4)
         l.setContentsMargins(8, 6, 8, 6)
         self.det_log = QTextEdit()
         self.det_log.setReadOnly(True)
-        self.det_log.setFixedHeight(65) # Reducido (-15px)
+        self.det_log.setFixedHeight(120) # Aún más alto porque hay espacio de sobra
         self.det_log.setFont(QFont("Consolas", 9))
         self.det_log.setStyleSheet(
             "QTextEdit{background:#0d1117;color:#e6db74;"
             "border:1px solid #30363d;border-radius:4px;}")
         btn = QPushButton("Limpiar")
-        btn.setFixedHeight(22) # Reducido
+        btn.setFixedHeight(22) 
         btn.clicked.connect(self.det_log.clear)
         l.addWidget(self.det_log); l.addWidget(btn)
         return g
@@ -315,7 +300,7 @@ class DetectionTab(QWidget):
             "color:#58a6ff; font-size:10px;")
         self.label_save_path.setWordWrap(True)
         self.btn_save_folder = QPushButton("📁")
-        self.btn_save_folder.setFixedSize(24, 24) # Reducido
+        self.btn_save_folder.setFixedSize(24, 24) 
         row.addWidget(self.label_save_path, stretch=1)
         row.addWidget(self.btn_save_folder)
         self.label_saved = QLabel("Guardadas: 0")
@@ -326,7 +311,6 @@ class DetectionTab(QWidget):
         return g
 
     def _grp_machine(self) -> QGroupBox:
-        # ── NUEVA LÓGICA: Se asigna a variable y se apaga por defecto ──
         self.grp_machine_box = QGroupBox("🤖  Máquina  —  ESP32")
         self.grp_machine_box.setStyleSheet(GS)
         self.grp_machine_box.setEnabled(False) 
@@ -364,7 +348,7 @@ class DetectionTab(QWidget):
         self.btn_s1 = QPushButton("1 BOT");   self.btn_s1.setStyleSheet(BBLU)
         self.btn_s2 = QPushButton("2 LATA");  self.btn_s2.setStyleSheet(BPUR)
         for b in (self.btn_s0, self.btn_s1, self.btn_s2):
-            b.setFixedHeight(26) # Reducido
+            b.setFixedHeight(26) 
         r2.addWidget(self.btn_s0); r2.addWidget(self.btn_s1); r2.addWidget(self.btn_s2)
         l.addLayout(r2)
         self.btn_home = QPushButton("⌂  Home")
@@ -384,25 +368,16 @@ class DetectionTab(QWidget):
             row.addWidget(bo); row.addWidget(bc)
             l.addLayout(row)
             
-        # El botón rojo de E-STOP fue eliminado visualmente
         return g
 
     # ──────────────────────────────────────────────────────────────────────
     def _connect_signals(self):
-        self.btn_load.clicked.connect(self._load_model)
-        self.btn_unload.clicked.connect(self._unload_model)
-        self._yolo.model_loaded.connect(self._on_model_loaded)
-        self._yolo.result_ready.connect(self._on_result)
+        # Escuchar resultados y errores del PipelineWorker
+        self._worker.result_ready.connect(self._on_result)
+        self._worker.error.connect(lambda msg: self.status_message.emit(f"⚠️ {msg}"))
 
         self.btn_start.clicked.connect(self._toggle_start)
         self.radio_auto.toggled.connect(lambda v: setattr(self, '_auto', v))
-
-        self.slider_conf.valueChanged.connect(
-            lambda v: (self.label_conf.setText(f"{v/100:.2f}"),
-                       self._yolo.set_confidence(v / 100)))
-        self.slider_iou.valueChanged.connect(
-            lambda v: (self.label_iou.setText(f"{v/100:.2f}"),
-                       self._yolo.set_iou(v / 100)))
 
         self._serial.us_data.connect(self._on_us)
         self._serial.event_received.connect(self._on_event)
@@ -429,17 +404,30 @@ class DetectionTab(QWidget):
         self.shortcut_esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self.shortcut_esc.activated.connect(self._serial.emergency_stop)
 
+    # ── Mostrar Diálogo Flotante ──────────────────────────────────────────
+    def _show_pipeline_dialog(self):
+        if self._pipeline_dlg is None:
+            self._pipeline_dlg = PipelineDialog(self._worker, self._worker._config_path, self)
+            # Forzamos que herede el tema oscuro de la ventana principal
+            if self.window():
+                self._pipeline_dlg.setStyleSheet(self.window().styleSheet())
+        
+        # .show() lo hace flotante para que puedas seguir usando la UI principal
+        self._pipeline_dlg.show()
+        self._pipeline_dlg.raise_()
+        self._pipeline_dlg.activateWindow()
+
     # ── Slots públicos ────────────────────────────────────────────────────
     def receive_frame(self, frame: np.ndarray):
         self._last_frame = frame
         if self._running:
-            self._yolo.submit_frame(frame)
+            self._worker.submit_frame(frame)
         else:
             self.video.display_frame(frame)
 
     def on_camera_connected(self, idx: int):
-        if not self._yolo.isRunning():
-            self._yolo.start()
+        if not self._worker.isRunning():
+            self._worker.start()
         self.btn_start.setEnabled(True)
 
     def on_camera_disconnected(self):
@@ -462,11 +450,10 @@ class DetectionTab(QWidget):
         self.radio_auto.setEnabled(False)
         self.radio_manual.setEnabled(False)
         
-        # ── ACTIVAR ESP32 ──
         self.grp_machine_box.setEnabled(True)
 
         mode = "AUTO 🤖" if self._auto else "MANUAL 🖐"
-        self.label_info.setText(f"▶  Detectando  |  Modo: {mode}")
+        self.label_info.setText(f"▶  Detectando en cascada...  |  Modo: {mode}")
         self.label_info.setStyleSheet(INFO_RUN)
         self.status_message.emit(f"▶  Detección iniciada — {mode}")
 
@@ -478,7 +465,6 @@ class DetectionTab(QWidget):
         self.radio_auto.setEnabled(True)
         self.radio_manual.setEnabled(True)
         
-        # ── DESACTIVAR ESP32 Y MANDAR PARO ──
         self.grp_machine_box.setEnabled(False)
         self._serial.emergency_stop() 
 
@@ -486,73 +472,74 @@ class DetectionTab(QWidget):
         self.label_info.setStyleSheet(INFO_IDLE)
         self.status_message.emit("■  Detección detenida")
 
-    # ── Modelo ────────────────────────────────────────────────────────────
-    def _load_model(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Modelo YOLO", os.getcwd(), "YOLO (*.pt *.onnx);;All (*)")
-        if path:
-            self.label_model.setText(f"⏳  {os.path.basename(path)}…")
-            self._yolo.load_model(path)
-
-    def _unload_model(self):
-        self._yolo.unload_model()
-
-    def _on_model_loaded(self, ok: bool, msg: str):
-        self.label_model.setText(msg)
-        self.label_model.setStyleSheet(
-            f"color:{'#00d4aa' if ok else '#ff4757'}; font-size:10px;")
-        self.btn_unload.setEnabled(ok)
-        self.status_message.emit(msg)
-
-    # ── Resultado YOLO ────────────────────────────────────────────────────
-    def _on_result(self, frame: np.ndarray, detections: list):
+    # ── Resultado del Pipeline ────────────────────────────────────────────
+    def _on_result(self, result: PipelineResult):
         if not self._running:
             return
-        self.video.display_frame(frame)
-        n = len(detections)
+            
+        self.video.display_frame(result.annotated)
         mode = "AUTO 🤖" if self._auto else "MANUAL 🖐"
-        self.label_info.setText(
-            f"▶  Detectando  |  {n} obj  |  {mode}")
+        main_type = result.type
+        
+        if result.stopped_at:
+            self.label_info.setText(f"🛑 Detenido en [{result.stopped_at}]  |  {mode}")
+        else:
+            self.label_info.setText(f"▶ Analizado: {main_type}  |  {mode}")
 
-        if detections:
+        if result.steps:
             ts = datetime.now().strftime("%H:%M:%S")
-            for d in detections:
-                self.det_log.append(
-                    f"[{ts}] {d['name']:18s}  {d['conf']:.2f}")
+            self.det_log.append(f"--- Análisis {ts} ---")
+            for step in result.steps:
+                if step.label != "desconocido":
+                    self.det_log.append(f" > {step.model_id}: {step.label} ({step.conf:.2f})")
+            
+            if result.price_mxn > 0:
+                self.det_log.append(f" 💰 Valor estimado: ${result.price_mxn:.2f} MXN")
+
             self.det_log.verticalScrollBar().setValue(
-                self.det_log.verticalScrollBar().maximum())
+                self.det_log.verticalScrollBar().maximum()
+            )
 
             if self.chk_autosave.isChecked():
-                self._save_detection(frame, detections)
+                self._save_detection(result)
 
             if self._auto and self._pending_auto_sort:
-                best   = max(detections, key=lambda d: d["conf"])
-                cls_id = self.CLASS_SORT_MAP.get(best["name"], 0)
+                cls_id = self.CLASS_SORT_MAP.get(main_type, 0)
                 self._serial.sort(cls_id)
-                self.det_log.append(
-                    f"[AUTO] → SORT:{cls_id}  ({best['name']})")
+                self.det_log.append(f"[AUTO] → SORT:{cls_id}  ({main_type})")
                 self._pending_auto_sort = False
 
-    # ── Guardado ──────────────────────────────────────────────────────────
-    def _save_detection(self, frame: np.ndarray, detections: list):
+    # ── Guardado JSON Dinámico ────────────────────────────────────────────
+    def _save_detection(self, result: PipelineResult):
         os.makedirs(self._save_folder, exist_ok=True)
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:20]
-        d0   = detections[0]
-        base = f"{ts}_{d0['name']}_{int(d0['conf']*100)}"
-        cv2.imwrite(os.path.join(self._save_folder, f"{base}.jpg"), frame)
-        with open(os.path.join(self._save_folder, f"{base}.json"), "w") as f:
+        base = f"{ts}_{result.type}"
+        
+        cv2.imwrite(os.path.join(self._save_folder, f"{base}.jpg"), result.annotated)
+        
+        steps_data = []
+        for s in result.steps:
+            steps_data.append({
+                "model_id": s.model_id,
+                "label": s.label,
+                "conf": round(s.conf, 4),
+                "bbox": [round(v, 1) for v in s.bbox] if s.bbox else None
+            })
+            
+        with open(os.path.join(self._save_folder, f"{base}.json"), "w", encoding="utf-8") as f:
             json.dump({
                 "timestamp":  datetime.now().isoformat(),
                 "image":      f"{base}.jpg",
-                "detections": [
-                    {"class_id": d["class_id"], "name": d["name"],
-                     "conf": round(d["conf"], 4),
-                     "xyxy": [round(v, 1) for v in d["xyxy"]]}
-                    for d in detections
-                ]
-            }, f, indent=2)
+                "type":       result.type,
+                "brand":      result.brand,
+                "size":       result.size,
+                "condition":  result.condition,
+                "price_mxn":  result.price_mxn,
+                "stopped_at": result.stopped_at,
+                "steps":      steps_data
+            }, f, indent=2, ensure_ascii=False)
             
-        self._add_to_gallery(frame)
+        self._add_to_gallery(result.annotated)
         
         self._saved_count += 1
         self.label_saved.setText(f"Guardadas: {self._saved_count}")

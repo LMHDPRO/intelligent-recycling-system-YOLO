@@ -1,20 +1,21 @@
 """
 MainWindow — ventana principal.
   • Gestiona CameraThread (único, compartido entre tabs)
-  • Gestiona YOLOWorker  (único, compartido)
+  • Gestiona PipelineWorker (único, compartido, reemplaza a YOLOWorker)
   • Gestiona SerialManager (único, compartido)
   • Distribuye frames a CaptureTab y DetectionTab
   • Status bar unificado
 """
+import os
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QStatusBar, QLabel, QWidget
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui  import QIcon, QFont
 
-from core.camera_thread  import CameraThread
-from core.yolo_worker    import YOLOWorker
-from core.serial_manager import SerialManager
+from core.camera_thread   import CameraThread
+from core.pipeline_worker import PipelineWorker
+from core.serial_manager  import SerialManager
 
 from ui.capture_tab   import CaptureTab
 from ui.detection_tab import DetectionTab
@@ -28,14 +29,19 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("♻️  RecyclerVision  —  Sistema de Clasificación")
         self.setMinimumSize(1100, 720)
 
+        # ── Calcular la ruta absoluta al JSON ──
+        # Sube un nivel desde la carpeta "ui" hacia la raíz del proyecto "recycler_vision_Parcial2"
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(base_dir, "pipeline_config.json")
+
         # ── Componentes core ──────────────────────────────────
         self._camera = CameraThread()
-        self._yolo   = YOLOWorker()
+        self._worker = PipelineWorker(config_path) # Usamos la ruta absoluta
         self._serial = SerialManager()
 
         # ── Tabs ──────────────────────────────────────────────
         self._tab_capture   = CaptureTab()
-        self._tab_detection = DetectionTab(self._yolo, self._serial)
+        self._tab_detection = DetectionTab(self._worker, self._serial)
         self._tab_config    = ConfigTab(self._camera, self._serial)
 
         # ── TabWidget ─────────────────────────────────────────
@@ -50,7 +56,7 @@ class MainWindow(QMainWindow):
         # ── Status bar ────────────────────────────────────────
         self._status_cam    = QLabel("📷 Sin cámara")
         self._status_serial = QLabel("🔌 Sin serial")
-        self._status_model  = QLabel("🧠 Sin modelo")
+        self._status_model  = QLabel("🧠 Pipeline Inicializado")
 
         for lbl in (self._status_cam, self._status_serial, self._status_model):
             lbl.setStyleSheet("color:#8b949e; padding: 0 8px;")
@@ -88,10 +94,6 @@ class MainWindow(QMainWindow):
         self._serial.status_changed.connect(
             lambda msg: self._status_serial.setText(f"🔌 {msg}"))
 
-        # YOLO model → status bar
-        self._yolo.model_loaded.connect(
-            lambda ok, msg: self._status_model.setText(f"🧠 {msg}"))
-
         # Tab messages → status bar
         self._tab_capture.status_message.connect(self.statusBar().showMessage)
         self._tab_detection.status_message.connect(self.statusBar().showMessage)
@@ -102,7 +104,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Cierre limpio: detener todos los hilos."""
-        self._yolo.stop()
+        self._worker.stop()
         self._camera.stop()
         self._serial.disconnect()
         event.accept()

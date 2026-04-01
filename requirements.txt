@@ -1,0 +1,9 @@
+# RecyclerVision — Dependencias
+# Instalar con:  pip install -r requirements.txt
+
+PySide6>=6.6.0
+opencv-python>=4.9.0
+pyserial>=3.5
+
+# Para detección con YOLO (instalar cuando tengas el modelo):
+# ultralytics>=8.1.0

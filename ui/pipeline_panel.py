@@ -2,6 +2,7 @@
 ui/pipeline_panel.py
 ======================
 Widget de panel de pipeline de modelos y su Diálogo flotante.
+Layout en formato de árbol (Columnas) para mejor visualización.
 """
 
 import json
@@ -164,7 +165,6 @@ class ModelSlot(QFrame):
         self.threshold_changed.emit(self._mid, conf, iou)
 
     def set_loaded(self, path: str):
-        """Restaura estado al cargar config desde JSON."""
         if path:
             self._path_label.setText(Path(path).name)
             self._path_label.setStyleSheet("color:#27AE60; font-size:10px;")
@@ -177,10 +177,11 @@ class ModelSlot(QFrame):
 
 class PipelinePanel(QGroupBox):
     """
-    Panel con todos los slots de modelos del pipeline.
+    Panel lateral con todos los slots de modelos del pipeline.
+    Organizado en columnas lógicas (Botellas vs Latas).
     """
     def __init__(self, worker, config_path: str = "pipeline_config.json", parent=None):
-        super().__init__("⚙ Pipeline de Modelos", parent)
+        super().__init__("⚙ Arquitectura del Pipeline de Modelos", parent)
         self._worker      = worker
         self._config_path = config_path
         self._slots: dict[str, ModelSlot] = {}
@@ -192,15 +193,16 @@ class PipelinePanel(QGroupBox):
             QGroupBox {
                 color: #ccc;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 13px;
                 border: 1px solid #444;
                 border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 4px;
+                margin-top: 12px;
+                padding-top: 8px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 10px;
+                top: -4px;
                 padding: 0 4px;
             }
         """)
@@ -211,29 +213,76 @@ class PipelinePanel(QGroupBox):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         container = QWidget()
-        v = QVBoxLayout(container)
-        v.setSpacing(6)
-        v.setContentsMargins(4, 4, 4, 4)
+        main_vbox = QVBoxLayout(container)
+        main_vbox.setSpacing(12)
+        main_vbox.setContentsMargins(8, 8, 8, 8)
 
-        # Cargar modelos desde config
+        # 1. Instanciar todos los slots disponibles
         models_cfg = self._worker.pipeline_cfg if self._worker else []
+        created_slots = {}
+        
         for m in models_cfg:
             slot = ModelSlot(m)
             slot.model_loaded.connect(self._on_model_loaded)
             slot.model_unloaded.connect(self._on_model_unloaded)
             slot.threshold_changed.connect(self._on_threshold)
             self._slots[m["id"]] = slot
-            v.addWidget(slot)
+            created_slots[m["id"]] = slot
 
-        v.addStretch()
+        # ── ESTRUCTURACIÓN DEL ÁRBOL VISUAL ──
+
+        # Nivel 1: Filtro de entrada (Ocupa todo el ancho)
+        if "01_type" in created_slots:
+            lbl_entrada = QLabel("↓ 1. CLASIFICACIÓN PRINCIPAL ↓")
+            lbl_entrada.setStyleSheet("color: #8b949e; font-weight: bold; font-size: 11px;")
+            lbl_entrada.setAlignment(Qt.AlignCenter)
+            main_vbox.addWidget(lbl_entrada)
+            main_vbox.addWidget(created_slots["01_type"])
+
+        # Nivel 2: Bifurcación completa en 2 columnas (La forma de "Y")
+        columns_layout = QHBoxLayout()
+        columns_layout.setSpacing(16)
+
+        # Columna Izquierda: Botellas
+        left_col = QVBoxLayout()
+        lbl_botellas = QLabel("🧴 RAMA: BOTELLAS")
+        lbl_botellas.setStyleSheet("color: #ff4757; font-weight: bold; font-size: 12px;")
+        lbl_botellas.setAlignment(Qt.AlignCenter)
+        left_col.addWidget(lbl_botellas)
+
+        # Agregamos los 4 modelos de botellas
+        for mid in ["02_cap", "05_size_bottle", "03_brand_bottle", "07_condition_bottle"]:
+            if mid in created_slots:
+                left_col.addWidget(created_slots[mid])
+        left_col.addStretch()
+
+        # Columna Derecha: Latas
+        right_col = QVBoxLayout()
+        lbl_latas = QLabel("🥫 RAMA: LATAS")
+        lbl_latas.setStyleSheet("color: #58a6ff; font-weight: bold; font-size: 12px;")
+        lbl_latas.setAlignment(Qt.AlignCenter)
+        right_col.addWidget(lbl_latas)
+
+        # Agregamos los 3 modelos de latas
+        for mid in ["06_size_can", "04_brand_can", "08_condition_can"]:
+            if mid in created_slots:
+                right_col.addWidget(created_slots[mid])
+        right_col.addStretch()
+
+        columns_layout.addLayout(left_col)
+        columns_layout.addLayout(right_col)
+        
+        main_vbox.addSpacing(10)
+        main_vbox.addLayout(columns_layout)
+
+        main_vbox.addStretch()
         scroll.setWidget(container)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(4, 12, 4, 4)
+        outer.setContentsMargins(4, 16, 4, 4)
         outer.addWidget(scroll)
 
     def _restore_from_config(self):
-        """Si en el JSON hay rutas guardadas, restaura el estado visual."""
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
@@ -265,31 +314,30 @@ class PipelinePanel(QGroupBox):
 
 class PipelineDialog(QDialog):
     """
-    Ventana flotante que contiene el PipelinePanel para no saturar la UI principal.
+    Ventana flotante rediseñada para acomodar el formato de dos columnas.
     """
     def __init__(self, worker, config_path: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚙️ Configuración del Pipeline de Modelos")
-        self.setMinimumSize(480, 650)
         
-        # Elimina el marco de ayuda nativo de Windows (el signo de interrogación)
+        # ── TAMAÑO AGRANDADO PARA ACOMODAR LAS DOS COLUMNAS ──
+        self.setMinimumSize(850, 750) 
+        
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
 
-        # Instanciar el panel que ya hace todo el trabajo
         self.panel = PipelinePanel(worker, config_path, self)
         layout.addWidget(self.panel)
 
-        # Botón para cerrar
-        self.btn_close = QPushButton("Cerrar")
-        self.btn_close.setFixedHeight(32)
+        self.btn_close = QPushButton("Cerrar y Aplicar")
+        self.btn_close.setFixedHeight(36)
         self.btn_close.setStyleSheet("""
             QPushButton {
-                background: #21262d; color: #c9d1d9; font-weight: bold;
-                border: 1px solid #30363d; border-radius: 5px;
+                background: #21262d; color: #c9d1d9; font-weight: bold; font-size: 13px;
+                border: 1px solid #30363d; border-radius: 6px;
             }
             QPushButton:hover { background: #30363d; border-color: #8b949e; }
         """)

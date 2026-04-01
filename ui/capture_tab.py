@@ -1,12 +1,10 @@
 """
-Tab de Captura de Dataset v2:
-  • Dropdowns editables de lote y clase con ➕ botón "Guardar nuevo"
-  • Presets persistentes en capture_presets.json (carpeta del script)
-  • Preview de cámara mejorado
-  • Panel de control más cómodo
+Tab de Captura de Dataset v5.0:
+  • UI Nativa Pura: 100% libre de hacks en flechas y sub-controles.
+  • Botón "+" seguro y sin deformaciones.
+  • Integración total con config_loader.
 """
 import os
-import json
 import cv2
 import numpy as np
 from datetime import datetime
@@ -14,84 +12,88 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QGroupBox,
     QLabel, QComboBox, QPushButton, QSpinBox,
     QProgressBar, QFileDialog, QMessageBox,
-    QSizePolicy, QFormLayout, QFrame, QLineEdit,
-    QInputDialog, QToolButton
+    QSizePolicy, QFormLayout, QFrame
 )
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui  import QFont, QIcon
 
 from ui.widgets import VideoLabel
-
-# ── Archivo de presets ─────────────────────────────────────────────────────
-_PRESETS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "..", "capture_presets.json")
-
-_DEFAULT_CLASSES = [
-    "botella_con_tapa",
-    "botella_sin_tapa",
-    "lata",
-    "ninguno",
-]
-_DEFAULT_BATCHES = ["lote_01", "lote_02"]
+from core.config_loader import CaptureConfig
 
 
-def _load_presets() -> dict:
-    try:
-        with open(_PRESETS_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return {
-            "classes": list(_DEFAULT_CLASSES),
-            "batches": list(_DEFAULT_BATCHES),
-            "last_folder": os.path.join(os.getcwd(), "dataset"),
-            "quantity":    20,
-            "interval_ms": 500,
-        }
+# ── CSS NATIVO (Sin tocar pseudo-elementos ::) ──
+CLEAN_COMBO_CSS = """
+QComboBox {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    color: #c9d1d9;
+    padding: 4px 8px;
+    font-size: 13px;
+}
+QComboBox:focus { border-color: #58a6ff; }
+QComboBox QAbstractItemView {
+    background: #161b22;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    selection-background-color: #1f6feb;
+}
+"""
 
-
-def _save_presets(data: dict):
-    try:
-        with open(_PRESETS_FILE, "w") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+CLEAN_SPIN_CSS = """
+QSpinBox {
+    background-color: #161b22;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+}
+QSpinBox:focus { border-color: #58a6ff; }
+"""
 
 
 # ─────────────────────────────────────────────────────────────────────────
 class _EditableCombo(QWidget):
-    """ComboBox editable con botón ➕ para añadir y 🗑 para borrar."""
-
+    """ComboBox editable con un botón + limpio."""
     changed = Signal(str)
 
     def __init__(self, items: list[str], placeholder: str = ""):
         super().__init__()
-        self._items = list(items)
+        self._items = list(items) if items else []
 
         self.combo = QComboBox()
         self.combo.setEditable(True)
         self.combo.setInsertPolicy(QComboBox.NoInsert)
         self.combo.lineEdit().setPlaceholderText(placeholder)
+        self.combo.setMinimumHeight(28)
+        self.combo.setStyleSheet(CLEAN_COMBO_CSS)
+
         self._populate()
 
-        self.btn_add = QToolButton()
-        self.btn_add.setText("➕")
-        self.btn_add.setToolTip("Guardar texto actual como nueva opción")
+        # Botón + limpio, sin fuentes raras que lo deformen
+        self.btn_add = QPushButton("+")
+        self.btn_add.setToolTip("Guardar clase en la lista permanentemente")
         self.btn_add.setFixedSize(28, 28)
-
-        self.btn_del = QToolButton()
-        self.btn_del.setText("🗑")
-        self.btn_del.setToolTip("Eliminar opción seleccionada")
-        self.btn_del.setFixedSize(28, 28)
+        self.btn_add.setStyleSheet("""
+            QPushButton {
+                background-color: #238636;
+                color: #ffffff;
+                border: 1px solid #2ea043;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton:hover { background-color: #2ea043; }
+            QPushButton:pressed { background-color: #196c2e; }
+        """)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(3)
-        lay.addWidget(self.combo)
+        lay.setSpacing(6)
+        lay.addWidget(self.combo, stretch=1)
         lay.addWidget(self.btn_add)
-        lay.addWidget(self.btn_del)
 
         self.btn_add.clicked.connect(self._add_item)
-        self.btn_del.clicked.connect(self._del_item)
         self.combo.currentTextChanged.connect(self.changed)
 
     def _populate(self):
@@ -100,19 +102,11 @@ class _EditableCombo(QWidget):
             self.combo.addItem(item)
 
     def _add_item(self):
-        text = self.combo.currentText().strip()
-        if not text or text in self._items:
-            return
-        self._items.append(text)
-        self.combo.addItem(text)
-        self.combo.setCurrentText(text)
-
-    def _del_item(self):
-        text = self.combo.currentText().strip()
-        if text in self._items and len(self._items) > 1:
-            self._items.remove(text)
-            idx = self.combo.currentIndex()
-            self.combo.removeItem(idx)
+        text = self.combo.currentText().strip().replace(" ", "_").lower()
+        if text and text not in self._items:
+            self._items.append(text)
+            self.combo.addItem(text)
+            self.combo.setCurrentText(text)
 
     def current_text(self) -> str:
         return self.combo.currentText().strip()
@@ -136,31 +130,34 @@ class CaptureTab(QWidget):
         self._burst_total  = 0
         self._burst_timer  = QTimer(self)
         self._burst_timer.timeout.connect(self._take_one)
-        self._presets      = _load_presets()
-        self._save_folder  = self._presets.get(
-            "last_folder", os.path.join(os.getcwd(), "dataset"))
+        
+        # ── CEREBRO CENTRAL CON RUTA ABSOLUTA ──
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(base_dir, "pipeline_config.json")
+        
+        self._cfg = CaptureConfig(config_path)
+        self._save_folder = self._cfg.output_folder
+
         self._build_ui()
         self._connect_signals()
 
     # ──────────────────────────────────────────────────────────────────────
     def _build_ui(self):
         root = QHBoxLayout(self)
-        root.setSpacing(12)
+        root.setSpacing(16)
         root.setContentsMargins(12, 12, 12, 12)
 
-        # Izquierda: preview
         left = QVBoxLayout()
         self.video = VideoLabel("📷  Conecta la cámara en Configuración")
         self.video.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.label_cam_info = QLabel("Sin cámara activa")
         self.label_cam_info.setAlignment(Qt.AlignCenter)
-        self.label_cam_info.setStyleSheet("color:#484f58; font-size:11px;")
+        self.label_cam_info.setStyleSheet("color:#8b949e; font-size:12px; font-weight:bold;")
         left.addWidget(self.video)
         left.addWidget(self.label_cam_info)
 
-        # Derecha: controles
         right = QVBoxLayout()
-        right.setSpacing(10)
+        right.setSpacing(12)
         right.addWidget(self._build_folder_group())
         right.addWidget(self._build_capture_group())
         right.addWidget(self._build_progress_group())
@@ -175,13 +172,19 @@ class CaptureTab(QWidget):
         g = QGroupBox("📁  Carpeta de salida")
         g.setStyleSheet(GROUP_STYLE)
         lay = QVBoxLayout(g)
-        lay.setSpacing(4)
+        lay.setSpacing(8)
+        
         self.label_folder = QLabel(self._save_folder)
         self.label_folder.setWordWrap(True)
-        self.label_folder.setStyleSheet(
-            "color:#58a6ff; font-size:10px; padding:2px;")
+        self.label_folder.setStyleSheet("color:#58a6ff; font-size:11px; font-weight:bold;")
+        
         self.btn_folder = QPushButton("📂  Seleccionar carpeta…")
-        self.btn_folder.setFixedHeight(28)
+        self.btn_folder.setFixedHeight(30)
+        self.btn_folder.setStyleSheet("""
+            QPushButton { background:#21262d; color:#c9d1d9; border:1px solid #30363d; border-radius:5px; font-weight:bold;}
+            QPushButton:hover { background:#30363d; border-color:#8b949e; }
+        """)
+        
         lay.addWidget(self.label_folder)
         lay.addWidget(self.btn_folder)
         return g
@@ -190,67 +193,76 @@ class CaptureTab(QWidget):
         g = QGroupBox("⚙️  Configuración de captura")
         g.setStyleSheet(GROUP_STYLE)
         lay = QFormLayout(g)
-        lay.setSpacing(8)
+        lay.setSpacing(12)
         lay.setLabelAlignment(Qt.AlignRight)
 
-        # Lote editable
         self.combo_batch = _EditableCombo(
-            self._presets.get("batches", _DEFAULT_BATCHES),
+            [self._cfg.current_lote, "lote_02", "lote_03"],
             placeholder="nombre del lote…"
         )
+        self.combo_batch.combo.setCurrentText(self._cfg.current_lote)
         lay.addRow("Lote:", self.combo_batch)
 
-        # Clase editable
+        clases_dinamicas = self._cfg.generate_classes_from_sizes()
+        clases_guardadas = self._cfg.classes
+        todas_las_clases = []
+        for c in clases_dinamicas + clases_guardadas:
+            if c not in todas_las_clases:
+                todas_las_clases.append(c)
+
         self.combo_class = _EditableCombo(
-            self._presets.get("classes", _DEFAULT_CLASSES),
+            todas_las_clases,
             placeholder="clase / etiqueta…"
         )
         lay.addRow("Clase:", self.combo_class)
 
-        # Pista visual de la ruta
         self.label_dest_hint = QLabel("")
-        self.label_dest_hint.setStyleSheet(
-            "color:#484f58; font-size:9px; font-style:italic;")
+        self.label_dest_hint.setStyleSheet("color:#8b949e; font-size:10px; font-style:italic;")
         self.label_dest_hint.setWordWrap(True)
         lay.addRow("", self.label_dest_hint)
+
         self._update_dest_hint()
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color:#21262d;"); lay.addRow(sep)
+        sep.setStyleSheet("color:#30363d;"); lay.addRow(sep)
 
-        # Cantidad e intervalo
+        # ── SpinBoxes Nativos Limpios ──
         self.spin_qty = QSpinBox()
         self.spin_qty.setRange(1, 1000)
-        self.spin_qty.setValue(self._presets.get("quantity", 20))
+        self.spin_qty.setValue(self._cfg.burst_count)
         self.spin_qty.setSuffix("  fotos")
+        self.spin_qty.setMinimumHeight(28)
+        self.spin_qty.setStyleSheet(CLEAN_SPIN_CSS)
         lay.addRow("Cantidad:", self.spin_qty)
 
         self.spin_interval = QSpinBox()
         self.spin_interval.setRange(100, 10000)
-        self.spin_interval.setValue(self._presets.get("interval_ms", 500))
+        self.spin_interval.setValue(self._cfg.interval_ms)
         self.spin_interval.setSuffix("  ms")
         self.spin_interval.setSingleStep(100)
+        self.spin_interval.setMinimumHeight(28)
+        self.spin_interval.setStyleSheet(CLEAN_SPIN_CSS)
         lay.addRow("Intervalo:", self.spin_interval)
 
-        # Botón guardar configuración
         self.btn_save_preset = QPushButton("💾  Guardar configuración")
-        self.btn_save_preset.setFixedHeight(26)
-        self.btn_save_preset.setToolTip(
-            "Guarda lotes, clases y parámetros en capture_presets.json")
+        self.btn_save_preset.setFixedHeight(30)
+        self.btn_save_preset.setStyleSheet("""
+            QPushButton { background:#21262d; color:#c9d1d9; border:1px solid #30363d; border-radius:5px; font-weight:bold;}
+            QPushButton:hover { background:#30363d; border-color:#8b949e; }
+        """)
         lay.addRow("", self.btn_save_preset)
 
         sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet("color:#21262d;"); lay.addRow(sep2)
+        sep2.setStyleSheet("color:#30363d;"); lay.addRow(sep2)
 
-        # Botones de acción
         self.btn_burst = QPushButton("📸  TOMAR RÁFAGA")
-        self.btn_burst.setFixedHeight(44)
+        self.btn_burst.setFixedHeight(46)
         self.btn_burst.setEnabled(False)
         self.btn_burst.setStyleSheet(BTN_BURST)
 
         self.btn_stop  = QPushButton("■  Detener")
         self.btn_stop.setEnabled(False)
-        self.btn_stop.setFixedHeight(30)
+        self.btn_stop.setFixedHeight(32)
         self.btn_stop.setStyleSheet(BTN_STOP)
 
         lay.addRow("", self.btn_burst)
@@ -265,13 +277,12 @@ class CaptureTab(QWidget):
         self.progress.setValue(0)
         self.progress.setStyleSheet("""
             QProgressBar { border:1px solid #30363d; border-radius:4px;
-                           background:#161b22; color:#fff; text-align:center; height:16px; }
-            QProgressBar::chunk { background:#00d4aa; border-radius:3px; }
+                           background:#0d1117; color:#ffffff; text-align:center; height:20px; font-weight:bold; }
+            QProgressBar::chunk { background:#2ea043; border-radius:3px; }
         """)
         self.label_progress = QLabel("0 / 0")
         self.label_progress.setAlignment(Qt.AlignCenter)
-        self.label_progress.setStyleSheet(
-            "color:#c9d1d9; font-size:13px; font-family:Consolas;")
+        self.label_progress.setStyleSheet("color:#ffffff; font-size:14px; font-family:Consolas; font-weight:bold;")
         lay.addWidget(self.progress)
         lay.addWidget(self.label_progress)
         return g
@@ -280,10 +291,14 @@ class CaptureTab(QWidget):
         g = QGroupBox("📈  Estadísticas")
         g.setStyleSheet(GROUP_STYLE)
         lay = QFormLayout(g)
-        lay.setSpacing(5)
+        lay.setSpacing(6)
+        
         self.label_total = QLabel("0")
+        self.label_total.setStyleSheet("color:#2ea043; font-size:16px; font-weight:bold;")
+        
         self.label_last  = QLabel("—")
-        self.label_last.setStyleSheet("color:#58a6ff; font-size:10px;")
+        self.label_last.setStyleSheet("color:#58a6ff; font-size:12px; font-weight:bold;")
+        
         lay.addRow("Total guardadas:", self.label_total)
         lay.addRow("Último archivo:", self.label_last)
         return g
@@ -295,8 +310,8 @@ class CaptureTab(QWidget):
         self.btn_stop.clicked.connect(self._stop_burst)
         self.btn_save_preset.clicked.connect(self._save_preset)
 
-        self.combo_batch.changed.connect(lambda _: self._update_dest_hint())
-        self.combo_class.changed.connect(lambda _: self._update_dest_hint())
+        self.combo_batch.changed.connect(self._update_dest_hint)
+        self.combo_class.changed.connect(self._update_dest_hint)
 
     # ── Slots públicos ────────────────────────────────────────────────────
     def receive_frame(self, frame: np.ndarray):
@@ -305,12 +320,12 @@ class CaptureTab(QWidget):
 
     def on_camera_connected(self, idx: int):
         self.label_cam_info.setText(f"Cámara {idx} activa  ✅")
-        self.label_cam_info.setStyleSheet("color:#00d4aa; font-size:11px;")
+        self.label_cam_info.setStyleSheet("color:#00d4aa; font-size:12px; font-weight:bold;")
         self.btn_burst.setEnabled(True)
 
     def on_camera_disconnected(self):
         self.label_cam_info.setText("Sin cámara activa")
-        self.label_cam_info.setStyleSheet("color:#484f58; font-size:11px;")
+        self.label_cam_info.setStyleSheet("color:#ff4757; font-size:12px; font-weight:bold;")
         self.btn_burst.setEnabled(False)
         self.video.clear_frame()
         self._stop_burst()
@@ -324,7 +339,7 @@ class CaptureTab(QWidget):
             self.label_folder.setText(folder)
             self._update_dest_hint()
 
-    def _update_dest_hint(self):
+    def _update_dest_hint(self, _=None):
         batch = self.combo_batch.current_text() or "lote"
         cls   = self.combo_class.current_text() or "clase"
         short = os.path.join("…", batch, cls, "*.jpg")
@@ -332,13 +347,17 @@ class CaptureTab(QWidget):
 
     # ── Presets ───────────────────────────────────────────────────────────
     def _save_preset(self):
-        self._presets["classes"]     = self.combo_class.get_items()
-        self._presets["batches"]     = self.combo_batch.get_items()
-        self._presets["last_folder"] = self._save_folder
-        self._presets["quantity"]    = self.spin_qty.value()
-        self._presets["interval_ms"] = self.spin_interval.value()
-        _save_presets(self._presets)
-        self.status_message.emit("✅  Configuración guardada en capture_presets.json")
+        # Asegurar auto-guardado visual antes de mandar al JSON
+        self.combo_batch._add_item()
+        self.combo_class._add_item()
+
+        self._cfg._data["classes"] = self.combo_class.get_items()
+        self._cfg.current_lote     = self.combo_batch.current_text()
+        self._cfg.output_folder    = self._save_folder
+        self._cfg.burst_count      = self.spin_qty.value()
+        self._cfg.interval_ms      = self.spin_interval.value()
+        self._cfg.save()
+        self.status_message.emit("✅  Configuración guardada en pipeline_config.json")
 
     # ── Ráfaga ────────────────────────────────────────────────────────────
     def _start_burst(self):
@@ -348,6 +367,10 @@ class CaptureTab(QWidget):
 
         batch    = self.combo_batch.current_text() or "lote_01"
         cls      = self.combo_class.current_text() or "sin_clase"
+        
+        # Forzar formato
+        cls = cls.replace(" ", "_").lower()
+        
         total    = self.spin_qty.value()
         interval = self.spin_interval.value()
 
@@ -402,24 +425,23 @@ class CaptureTab(QWidget):
 # ─── Estilos ─────────────────────────────────────────────────────────────
 GROUP_STYLE = """
 QGroupBox {
-    font-weight:bold; font-size:12px; color:#c9d1d9;
-    border:1px solid #30363d; border-radius:8px;
-    margin-top:8px; padding-top:6px;
+    font-weight:bold; font-size:13px; color:#c9d1d9;
+    border:1px solid #30363d; border-radius:6px;
+    margin-top:12px; padding-top:8px;
 }
 QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 4px; }
 """
 BTN_BURST = """
 QPushButton {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                stop:0 #00b890, stop:1 #00d4aa);
-    color:#000; font-weight:bold; border-radius:6px; font-size:14px;
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #238636, stop:1 #2ea043);
+    color:#ffffff; font-weight:bold; border-radius:6px; font-size:15px; border: 1px solid #3fb950;
 }
-QPushButton:hover   { background:#00ffcc; }
-QPushButton:pressed { background:#009977; }
+QPushButton:hover   { background:#2ea043; }
+QPushButton:pressed { background:#196c2e; }
 QPushButton:disabled{ background:#1c2128; color:#484f58; border:1px solid #30363d; }
 """
 BTN_STOP = """
-QPushButton { background:#7f1d1d; color:#fff; font-weight:bold; border-radius:5px; }
-QPushButton:hover { background:#ef4444; }
-QPushButton:disabled { background:#1c2128; color:#484f58; }
+QPushButton { background:#da3633; color:#ffffff; font-weight:bold; border-radius:5px; border: 1px solid #f85149; font-size:13px; }
+QPushButton:hover { background:#f85149; }
+QPushButton:disabled { background:#1c2128; color:#484f58; border:1px solid #30363d; }
 """

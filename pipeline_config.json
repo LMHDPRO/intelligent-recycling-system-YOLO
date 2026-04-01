@@ -1,6 +1,7 @@
 {
   "_comment": "RecyclerVision — Configuración del pipeline y captura de dataset",
-  "_version": "2.0.0",
+  "_version": "2.1.0",
+
   "capture": {
     "output_folder": "C:/Users/IGNITER/OneDrive/Documents/Developer/Culebron3ElRetorno/datasets",
     "current_lote": "lote_01",
@@ -14,28 +15,23 @@
       "botella_1L_sin_tapa",
       "botella_600ml_con_tapa",
       "botella_600ml_sin_tapa",
+      "botella_500ml_con_tapa",
+      "botella_500ml_sin_tapa",
       "botella_355ml_con_tapa",
       "botella_355ml_sin_tapa",
       "botella_255ml_con_tapa",
       "botella_255ml_sin_tapa",
-      "lata_355ml",
-      "lata_600ml",
+      "lata_alta",
+      "lata_mediana",
+      "lata_baja",
       "ninguno"
     ],
     "sizes": {
-      "bottle": [
-        "255ml",
-        "355ml",
-        "600ml",
-        "1L"
-      ],
-      "can": [
-        "255ml",
-        "355ml",
-        "600ml"
-      ]
+      "bottle": ["255ml", "355ml", "500ml", "600ml", "1L"],
+      "can": ["baja", "mediana", "alta"]
     }
   },
+
   "pipeline": {
     "stop_on_unknown": true,
     "confidence_global": 0.5,
@@ -49,11 +45,7 @@
         "enabled": false,
         "conf": 0.5,
         "iou": 0.45,
-        "classes": [
-          "botella",
-          "lata",
-          "desconocido"
-        ],
+        "classes": ["botella", "lata", "desconocido"],
         "triggers_next": true
       },
       {
@@ -64,13 +56,8 @@
         "enabled": false,
         "conf": 0.55,
         "iou": 0.84,
-        "classes": [
-          "con_tapa",
-          "sin_tapa"
-        ],
-        "only_for_type": [
-          "botella"
-        ],
+        "classes": ["con_tapa", "sin_tapa"],
+        "only_for_type": ["botella"],
         "triggers_next": true
       },
       {
@@ -80,18 +67,9 @@
         "path": "",
         "enabled": false,
         "conf": 0.5,
-        "iou": 0.3,
-        "classes": [
-          "coca_cola",
-          "dr_pepper",
-          "sidral_mundet",
-          "7up",
-          "pepsi",
-          "generica"
-        ],
-        "only_for_type": [
-          "botella"
-        ],
+        "iou": 0.45,
+        "classes": ["coca_cola", "dr_pepper", "sidral_mundet", "7up", "pepsi", "generica"],
+        "only_for_type": ["botella"],
         "triggers_next": true
       },
       {
@@ -100,138 +78,107 @@
         "description": "Marca si es lata",
         "path": "",
         "enabled": false,
-        "conf": 0.44,
+        "conf": 0.5,
         "iou": 0.42,
-        "classes": [
-          "coca_cola",
-          "dr_pepper",
-          "sidral_mundet",
-          "7up",
-          "pepsi",
-          "generica"
-        ],
-        "only_for_type": [
-          "lata"
-        ],
+        "classes": ["coca_cola", "dr_pepper", "sidral_mundet", "7up", "pepsi", "generica"],
+        "only_for_type": ["lata"],
         "triggers_next": true
       },
       {
         "id": "05_size_bottle",
         "name": "Tamaño (Botella)",
-        "description": "255ml / 355ml / 600ml / 1L",
+        "description": "255ml / 355ml / 500ml / 600ml / 1L",
         "path": "",
         "enabled": false,
         "conf": 0.55,
         "iou": 0.4,
-        "classes": [
-          "255ml",
-          "355ml",
-          "600ml",
-          "1L"
-        ],
-        "only_for_type": [
-          "botella"
-        ],
+        "classes": ["255ml", "355ml", "500ml", "600ml", "1L"],
+        "only_for_type": ["botella"],
         "triggers_next": true
       },
       {
         "id": "06_size_can",
         "name": "Tamaño (Lata)",
-        "description": "255ml / 355ml / 600ml",
+        "description": "baja / mediana / alta",
         "path": "",
         "enabled": false,
         "conf": 0.55,
-        "iou": 0.37,
-        "classes": [
-          "255ml",
-          "355ml",
-          "600ml"
-        ],
-        "only_for_type": [
-          "lata"
-        ],
+        "iou": 0.4,
+        "classes": ["baja", "mediana", "alta"],
+        "only_for_type": ["lata"],
         "triggers_next": true
       },
       {
-        "id": "07_condition",
-        "name": "Estado",
+        "id": "07_condition_bottle",
+        "name": "Estado (Botella)",
         "description": "Bueno / Dañado / Aplastado / Sin etiqueta",
         "path": "",
         "enabled": false,
         "conf": 0.5,
         "iou": 0.45,
-        "classes": [
-          "bueno",
-          "dañado",
-          "aplastado",
-          "sin_etiqueta"
-        ],
+        "classes": ["bueno", "dañado", "aplastado", "sin_etiqueta"],
+        "only_for_type": ["botella"],
+        "triggers_next": false
+      },
+      {
+        "id": "08_condition_can",
+        "name": "Estado (Lata)",
+        "description": "Bueno / Dañado / Aplastado / Sin etiqueta",
+        "path": "",
+        "enabled": false,
+        "conf": 0.5,
+        "iou": 0.45,
+        "classes": ["bueno", "dañado", "aplastado", "sin_etiqueta"],
+        "only_for_type": ["lata"],
         "triggers_next": false
       }
     ]
   },
+
   "valuation": {
     "_comment": "Reglas de precio en MXN. El sistema elige la regla más específica que coincida.",
     "rules": [
-      {
-        "type": "botella",
-        "brand": "*",
-        "size": "*",
-        "condition": "bueno",
-        "price_mxn": 0.15
-      },
-      {
-        "type": "botella",
-        "brand": "*",
-        "size": "*",
-        "condition": "dañado",
-        "price_mxn": 0.08
-      },
-      {
-        "type": "botella",
-        "brand": "*",
-        "size": "*",
-        "condition": "aplastado",
-        "price_mxn": 0.05
-      },
-      {
-        "type": "lata",
-        "brand": "*",
-        "size": "*",
-        "condition": "bueno",
-        "price_mxn": 0.3
-      },
-      {
-        "type": "lata",
-        "brand": "*",
-        "size": "*",
-        "condition": "aplastado",
-        "price_mxn": 0.15
-      },
-      {
-        "type": "botella",
-        "brand": "coca_cola",
-        "size": "600ml",
-        "condition": "bueno",
-        "price_mxn": 0.5
-      },
-      {
-        "type": "lata",
-        "brand": "dr_pepper",
-        "size": "355ml",
-        "condition": "bueno",
-        "price_mxn": 0.45
-      },
-      {
-        "type": "desconocido",
-        "brand": "*",
-        "size": "*",
-        "condition": "*",
-        "price_mxn": 0.0
-      }
+      { "type": "botella", "brand": "*", "size": "255ml", "condition": "bueno",        "price_mxn": 0.10 },
+      { "type": "botella", "brand": "*", "size": "255ml", "condition": "dañado",       "price_mxn": 0.05 },
+      { "type": "botella", "brand": "*", "size": "255ml", "condition": "aplastado",    "price_mxn": 0.03 },
+      { "type": "botella", "brand": "*", "size": "255ml", "condition": "sin_etiqueta", "price_mxn": 0.07 },
+      
+      { "type": "botella", "brand": "*", "size": "355ml", "condition": "bueno",        "price_mxn": 0.12 },
+      { "type": "botella", "brand": "*", "size": "355ml", "condition": "dañado",       "price_mxn": 0.06 },
+      { "type": "botella", "brand": "*", "size": "355ml", "condition": "aplastado",    "price_mxn": 0.04 },
+      
+      { "type": "botella", "brand": "*", "size": "500ml", "condition": "bueno",        "price_mxn": 0.14 },
+      { "type": "botella", "brand": "*", "size": "500ml", "condition": "dañado",       "price_mxn": 0.07 },
+      { "type": "botella", "brand": "*", "size": "500ml", "condition": "aplastado",    "price_mxn": 0.05 },
+
+      { "type": "botella", "brand": "*", "size": "600ml", "condition": "bueno",        "price_mxn": 0.16 },
+      { "type": "botella", "brand": "*", "size": "600ml", "condition": "dañado",       "price_mxn": 0.08 },
+      { "type": "botella", "brand": "*", "size": "600ml", "condition": "aplastado",    "price_mxn": 0.05 },
+
+      { "type": "botella", "brand": "*", "size": "1L",    "condition": "bueno",        "price_mxn": 0.20 },
+      { "type": "botella", "brand": "*", "size": "1L",    "condition": "dañado",       "price_mxn": 0.10 },
+      { "type": "botella", "brand": "*", "size": "1L",    "condition": "aplastado",    "price_mxn": 0.07 },
+      
+      { "type": "lata",    "brand": "*", "size": "baja",    "condition": "bueno",      "price_mxn": 0.30 },
+      { "type": "lata",    "brand": "*", "size": "baja",    "condition": "dañado",     "price_mxn": 0.15 },
+      { "type": "lata",    "brand": "*", "size": "baja",    "condition": "aplastado",  "price_mxn": 0.10 },
+      
+      { "type": "lata",    "brand": "*", "size": "mediana", "condition": "bueno",      "price_mxn": 0.40 },
+      { "type": "lata",    "brand": "*", "size": "mediana", "condition": "dañado",     "price_mxn": 0.20 },
+      { "type": "lata",    "brand": "*", "size": "mediana", "condition": "aplastado",  "price_mxn": 0.12 },
+
+      { "type": "lata",    "brand": "*", "size": "alta",    "condition": "bueno",      "price_mxn": 0.50 },
+      { "type": "lata",    "brand": "*", "size": "alta",    "condition": "dañado",     "price_mxn": 0.25 },
+      { "type": "lata",    "brand": "*", "size": "alta",    "condition": "aplastado",  "price_mxn": 0.15 },
+
+      { "type": "botella", "brand": "coca_cola", "size": "600ml", "condition": "bueno", "price_mxn": 0.50 },
+      { "type": "lata",    "brand": "dr_pepper", "size": "mediana", "condition": "bueno", "price_mxn": 0.45 },
+
+      { "type": "desconocido", "brand": "*", "size": "*", "condition": "*", "price_mxn": 0.00 }
     ],
     "fallback_price": 0.05
   },
+
   "machine": {
     "belt_default_speed": 800,
     "sort_map": {
@@ -245,13 +192,7 @@
   },
   "ui": {
     "theme": "dark",
-    "oled_show": [
-      "type",
-      "brand",
-      "size",
-      "condition",
-      "price"
-    ],
+    "oled_show": ["type", "brand", "size", "condition", "price"],
     "log_max_lines": 200,
     "detections_folder": "C:/Users/IGNITER/OneDrive/Documents/Developer/Culebron3ElRetorno/detections"
   }

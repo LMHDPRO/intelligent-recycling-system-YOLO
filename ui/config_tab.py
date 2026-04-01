@@ -2,19 +2,18 @@
 Tab de Configuración:
   • Cámara: nombres reales del dispositivo, resolución, conectar/desconectar
   • Serial: puerto COM, baudrate, test, log
-
-Mejoras UI v2:
-  • Nombres reales de cámara (DirectShow / PnP)
-  • Indicadores LED animados
-  • Layout más compacto y legible
+  • Tabla de Precios: Visualización de las reglas de valoración desde el JSON
 """
+import os
+import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QComboBox, QPushButton, QLineEdit,
-    QTextEdit, QFormLayout, QFrame, QSizePolicy
+    QTextEdit, QFormLayout, QFrame, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui  import QFont
+from PySide6.QtGui  import QFont, QColor
 
 from core.camera_thread  import CameraThread, get_camera_names
 from core.serial_manager import SerialManager
@@ -46,12 +45,24 @@ class ConfigTab(QWidget):
 
     # ──────────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        # Usamos QHBoxLayout principal para dividir en dos columnas anchas
+        root = QHBoxLayout(self)
         root.setSpacing(14)
         root.setContentsMargins(20, 20, 20, 20)
-        root.addWidget(self._build_camera_group())
-        root.addWidget(self._build_serial_group())
-        root.addStretch()
+        
+        # Columna Izquierda: Cámara y Hardware
+        left_col = QVBoxLayout()
+        left_col.addWidget(self._build_camera_group())
+        left_col.addWidget(self._build_serial_group())
+        left_col.addStretch()
+        
+        # Columna Derecha: Tabla de Valoración
+        right_col = QVBoxLayout()
+        right_col.addWidget(self._build_pricing_group())
+        
+        # Añadimos al root, dándole el mismo peso a ambas columnas
+        root.addLayout(left_col, stretch=1)
+        root.addLayout(right_col, stretch=1)
 
     # ── Grupo Cámara ──────────────────────────────────────────────────────
     def _build_camera_group(self) -> QGroupBox:
@@ -173,6 +184,106 @@ class ConfigTab(QWidget):
         self.btn_clear_log.setFixedHeight(22)
         self.btn_clear_log.clicked.connect(self.serial_log.clear)
         lay.addRow("", self.btn_clear_log)
+        return g
+
+    # ── Grupo Tabla de Precios (GUAPETÓN) ─────────────────────────────────
+    def _build_pricing_group(self) -> QGroupBox:
+        g = QGroupBox("💰  Tabla de Clases y Valorización (Solo lectura)")
+        g.setStyleSheet(GROUP_STYLE)
+        lay = QVBoxLayout(g)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Tipo", "Marca", "Tamaño", "Estado", "Precio ($)"])
+        
+        # ── Cirugía Estética ──
+        self.table.verticalHeader().setVisible(False) # Adiós a los números feos de la izquierda
+        self.table.setFrameShape(QFrame.NoFrame)
+        self.table.setSelectionMode(QTableWidget.NoSelection) # Evita que se vea feo si haces clic
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+
+        # Ajuste de tamaño de columnas
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents) # Precio ajustado al texto
+        
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: #0d1117;
+                alternate-background-color: #161b22; /* El secreto para un dark mode hermoso */
+                color: #c9d1d9;
+                gridline-color: #21262d;
+                border: 1px solid #30363d;
+                border-radius: 6px;
+                outline: 0;
+            }
+            QHeaderView::section {
+                background-color: #21262d;
+                color: #c9d1d9;
+                font-weight: bold;
+                border: none;
+                border-bottom: 2px solid #30363d;
+                border-right: 1px solid #21262d;
+                padding: 6px;
+            }
+            QHeaderView::section:last {
+                border-right: none;
+            }
+            QTableWidget::item {
+                padding: 4px 8px;
+                border-bottom: 1px solid #161b22;
+            }
+        """)
+
+        # ── Cargar reglas desde pipeline_config.json ──
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(base_dir, "pipeline_config.json")
+        
+        rules = []
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                rules = cfg.get("valuation", {}).get("rules", [])
+        except Exception:
+            pass
+
+        self.table.setRowCount(len(rules))
+        for row, rule in enumerate(rules):
+            # Formateador de celdas
+            def _mk_item(text):
+                it = QTableWidgetItem(text)
+                if text == "*":
+                    it.setForeground(QColor("#6e7681")) # Gris sutil para los comodines
+                    it.setTextAlignment(Qt.AlignCenter)
+                else:
+                    it.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                return it
+
+            self.table.setItem(row, 0, _mk_item(rule.get("type", "*")))
+            self.table.setItem(row, 1, _mk_item(rule.get("brand", "*")))
+            self.table.setItem(row, 2, _mk_item(rule.get("size", "*")))
+            self.table.setItem(row, 3, _mk_item(rule.get("condition", "*")))
+            
+            # Formateador del Precio
+            price_val = rule.get("price_mxn", 0.0)
+            price_item = QTableWidgetItem(f"${price_val:.2f}")
+            price_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            price_item.setForeground(QColor("#3fb950") if price_val > 0 else QColor("#f85149")) # Verde GitHub y Rojo GitHub
+            
+            font = QFont()
+            font.setBold(True)
+            price_item.setFont(font)
+            
+            self.table.setItem(row, 4, price_item)
+
+        lay.addWidget(self.table)
+
+        # Mensaje informativo
+        info = QLabel("<i>Para modificar precios o clases, edita el archivo <b>pipeline_config.json</b> y reinicia la app.</i>")
+        info.setStyleSheet("color: #8b949e; font-size: 11px;")
+        lay.addWidget(info)
+
         return g
 
     # ──────────────────────────────────────────────────────────────────────
@@ -313,4 +424,3 @@ QPushButton { background:#196c2e; color:#fff; border-radius:5px; font-weight:bol
 QPushButton:hover { background:#238636; }
 QPushButton:disabled { background:#21262d; color:#484f58; }
 """
-from PySide6.QtWidgets import QHBoxLayout

@@ -1,28 +1,17 @@
 """
-PARCHE para ui/capture_tab.py
+core/config_loader.py
 ===============================
-Muestra cómo leer las variables de captura desde pipeline_config.json
-en lugar de tenerlas hardcodeadas.
-
-Busca en tu capture_tab.py los valores fijos de intervalo, cantidad de fotos,
-clases, etc., y reemplázalos con este loader.
-
-1. Importa al inicio de capture_tab.py:
-   from core.config_loader import CaptureConfig
-
-2. En __init__ de CaptureTab:
-   self._cfg = CaptureConfig()
-   self._apply_config()
-
-3. Al guardar cambios en UI, llama:
-   self._cfg.save()
+Maneja la lectura/escritura del pipeline_config.json
+Calcula la ruta absoluta automáticamente para evitar errores.
 """
 
 import json
+import os
 from pathlib import Path
 
-
-CONFIG_FILE = "pipeline_config.json"
+# Calcula la ruta absoluta a la raíz del proyecto para encontrar el JSON siempre
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG_FILE = os.path.join(BASE_DIR, "pipeline_config.json")
 
 
 class CaptureConfig:
@@ -59,15 +48,10 @@ class CaptureConfig:
             "image_width":   640,
             "image_height":  640,
             "auto_rename":   True,
-            "classes": [
-                "botella_1L_con_tapa",
-                "botella_600ml_con_tapa",
-                "lata_355ml",
-                "ninguno"
-            ],
+            "classes": [],
             "sizes": {
-                "bottle": ["255ml", "355ml", "600ml", "1L"],
-                "can":    ["255ml", "600ml"]
+                "bottle": ["255ml", "355ml", "500ml", "600ml", "1L"],
+                "can":    ["baja", "mediana", "alta"]
             }
         }
 
@@ -132,9 +116,9 @@ class CaptureConfig:
         include_no_cap: bool = True
     ) -> list[str]:
         """
-        Genera todas las combinaciones:
+        Genera todas las combinaciones dinámicamente basadas en el JSON:
             botella_1L_con_tapa, botella_1L_sin_tapa, ...
-            lata_355ml, lata_600ml, ...
+            lata_alta, lata_baja, ...
             ninguno
         """
         classes = []

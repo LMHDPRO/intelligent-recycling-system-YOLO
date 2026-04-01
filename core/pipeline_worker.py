@@ -60,14 +60,14 @@ class PipelineResult:
         
     @property
     def size(self)      -> str:
-        # LÓGICA ACTUALIZADA: Busca el tamaño en botellas o latas
         s = self.get("05_size_bottle") or self.get("06_size_can")
         return s.label if s else "—"
         
     @property
     def condition(self) -> str: 
-        # ACTUALIZADO al id 07
-        return self.get("07_condition").label if self.get("07_condition") else "—"
+        # ⬅️ AHORA BUSCA EL ESTADO EN LA RAMA DE BOTELLA O EN LA DE LATA
+        c = self.get("07_condition_bottle") or self.get("08_condition_can")
+        return c.label if c else "—"
 
 
 # ── worker principal ──────────────────────────────────────────────────────────

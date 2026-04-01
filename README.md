@@ -1,17 +1,21 @@
+<div align="center">
+
 ```
-██████╗ ███████╗ ██████╗██╗   ██╗ ██████╗██╗     ███████╗██████╗    ██╗   ██╗██╗███████╗██╗ ██████╗ ███╗   ██╗
-██╔══██╗██╔════╝██╔════╝╚██╗ ██╔╝██╔════╝██║     ██╔════╝██╔══██╗   ██║   ██║██║██╔════╝██║██╔═══██╗████╗  ██║
-██████╔╝█████╗  ██║      ╚████╔╝ ██║     ██║     █████╗  ██████╔╝   ██║   ██║██║███████╗██║██║   ██║██╔██╗ ██║
-██╔══██╗██╔══╝  ██║       ╚██╔╝  ██║     ██║     ██╔══╝  ██╔══██╗   ╚██╗ ██╔╝██║╚════██║██║██║   ██║██║╚██╗██║
-██║  ██║███████╗╚██████╗   ██║   ╚██████╗███████╗███████╗██║  ██║    ╚████╔╝ ██║███████║██║╚██████╔╝██║ ╚████║
-╚═╝  ╚═╝╚══════╝ ╚═════╝   ╚═╝    ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝     ╚═══╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+██████╗ ███████╗ ██████╗██╗   ██╗ ██████╗██╗     ███████╗██████╗     ██╗   ██╗██╗███████╗██╗ ██████╗ ███╗   ██╗    
+██╔══██╗██╔════╝██╔════╝╚██╗ ██╔╝██╔════╝██║     ██╔════╝██╔══██╗    ██║   ██║██║██╔════╝██║██╔═══██╗████╗  ██║
+██████╔╝█████╗  ██║      ╚████╔╝ ██║     ██║     █████╗  ██████╔╝    ██║   ██║██║███████╗██║██║   ██║██╔██╗ ██║
+██╔══██╗██╔══╝  ██║       ╚██╔╝  ██║     ██║     ██╔══╝  ██╔══██╗    ╚██╗ ██╔╝██║╚════██║██║██║   ██║██║╚██╗██║
+██║  ██║███████╗╚██████╗   ██║   ╚██████╗███████╗███████╗██║  ██║     ╚████╔╝ ██║███████║██║╚██████╔╝██║ ╚████║
+╚═╝  ╚═╝╚══════╝ ╚═════╝   ╚═╝    ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝      ╚═══╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
 ```
+
+<br>
 
 # RecyclerVision — Sistema Inteligente de Reciclaje
 
 **YOLOv11 · PySide6 · OpenCV · ESP32 · Clasificación de Residuos en Tiempo Real**
 
----
+<br>
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![PySide6](https://img.shields.io/badge/PySide6-6.6+-41CD52?style=flat-square&logo=qt&logoColor=white)](https://doc.qt.io/qtforpython/)
@@ -19,6 +23,8 @@
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.9+-5C3EE8?style=flat-square&logo=opencv&logoColor=white)](https://opencv.org/)
 [![ESP32](https://img.shields.io/badge/ESP32-Serial_UART-E7352C?style=flat-square&logo=espressif)](https://www.espressif.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
+
+</div>
 
 ---
 
@@ -264,7 +270,11 @@ intelligent-recycling-system-YOLO/
 | 🧑‍💻 | **William Monje** | [LinkedIn](https://www.linkedin.com/in/william-alejandro-monje-cano-1140a6242/) |
 | 🧑‍💻 | **Jesus Moreno** | [LinkedIn](https://www.linkedin.com/in/jesus-montero5420/) |
 
+<div align="center">
+
 [![Anáhuac Mayab](https://img.shields.io/badge/Universidad_Anáhuac_Mayab-Mérida,_MX-D4111A?style=for-the-badge)](https://merida.anahuac.mx/)
+
+</div>
 
 ---
 
@@ -283,4 +293,8 @@ intelligent-recycling-system-YOLO/
 
 ---
 
+<div align="center">
+
 *RecyclerVision · YOLOv11 Recycling Classifier · Made with ☕ in Mérida, MX*
+
+</div>

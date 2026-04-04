@@ -1,7 +1,7 @@
 """
 Tab de Configuración:
   • Cámara: nombres reales del dispositivo, resolución, conectar/desconectar
-  • Serial: puerto COM, baudrate, test, log
+  • Conexión ESP32: selector USB Serial / WiFi TCP + log + comandos manuales
   • Tabla de Precios: Visualización de las reglas de valoración desde el JSON
 """
 import os
@@ -10,14 +10,16 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QComboBox, QPushButton, QLineEdit,
     QTextEdit, QFormLayout, QFrame, QSizePolicy,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView,
+    QRadioButton, QButtonGroup, QStackedWidget
 )
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui  import QFont, QColor
+from PySide6.QtGui  import QFont, QColor, QIntValidator
 
-from core.camera_thread  import CameraThread, get_camera_names
-from core.serial_manager import SerialManager
-from ui.widgets          import StatusLED
+from core.camera_thread      import CameraThread, get_camera_names
+from core.serial_manager     import SerialManager
+from core.connection_manager import ConnectionManager
+from ui.widgets              import StatusLED
 
 
 # ── Hilo para detección de cámaras (no bloquea UI) ────────────────────────
@@ -33,10 +35,10 @@ class ConfigTab(QWidget):
     camera_connected    = Signal(int)
     camera_disconnected = Signal()
 
-    def __init__(self, camera: CameraThread, serial: SerialManager):
+    def __init__(self, camera: CameraThread, conn: ConnectionManager):
         super().__init__()
         self._cam         = camera
-        self._serial      = serial
+        self._conn        = conn
         self._cam_running = False
         self._scan_thread: _CamScanThread | None = None
         self._build_ui()
@@ -45,22 +47,18 @@ class ConfigTab(QWidget):
 
     # ──────────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        # Usamos QHBoxLayout principal para dividir en dos columnas anchas
         root = QHBoxLayout(self)
         root.setSpacing(14)
         root.setContentsMargins(20, 20, 20, 20)
-        
-        # Columna Izquierda: Cámara y Hardware
+
         left_col = QVBoxLayout()
         left_col.addWidget(self._build_camera_group())
-        left_col.addWidget(self._build_serial_group())
+        left_col.addWidget(self._build_connection_group())
         left_col.addStretch()
-        
-        # Columna Derecha: Tabla de Valoración
+
         right_col = QVBoxLayout()
         right_col.addWidget(self._build_pricing_group())
-        
-        # Añadimos al root, dándole el mismo peso a ambas columnas
+
         root.addLayout(left_col, stretch=1)
         root.addLayout(right_col, stretch=1)
 
@@ -72,7 +70,6 @@ class ConfigTab(QWidget):
         lay.setSpacing(10)
         lay.setLabelAlignment(Qt.AlignRight)
 
-        # Selector con nombre real
         self.combo_cam = QComboBox()
         self.combo_cam.setMinimumWidth(220)
         self.combo_cam.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -93,12 +90,10 @@ class ConfigTab(QWidget):
         lay.addRow("Dispositivo:", row_cam)
         lay.addRow("", self.label_scan)
 
-        # Resolución
         self.combo_res = QComboBox()
         self.combo_res.addItems(["1280×720  (HD)", "640×480  (VGA)", "1920×1080  (FHD)"])
         lay.addRow("Resolución:", self.combo_res)
 
-        # Botones
         self.btn_cam_connect    = QPushButton("▶  Conectar")
         self.btn_cam_connect.setStyleSheet(BTN_GREEN)
         self.btn_cam_disconnect = QPushButton("■  Desconectar")
@@ -113,61 +108,77 @@ class ConfigTab(QWidget):
         lay.addRow("Estado:", self.label_cam_status)
         return g
 
-    # ── Grupo Serial ──────────────────────────────────────────────────────
-    def _build_serial_group(self) -> QGroupBox:
-        g = QGroupBox("🔌  ESP32  —  Serial")
+    # ── Grupo Conexión ESP32 (Serial USB / WiFi TCP) ──────────────────────
+    def _build_connection_group(self) -> QGroupBox:
+        g = QGroupBox("🔌  ESP32  —  Conexión")
         g.setStyleSheet(GROUP_STYLE)
-        lay = QFormLayout(g)
-        lay.setSpacing(10)
-        lay.setLabelAlignment(Qt.AlignRight)
 
-        self.combo_port = QComboBox()
-        self.combo_port.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        root = QVBoxLayout(g)
+        root.setSpacing(10)
+        root.setContentsMargins(12, 14, 12, 12)
 
-        self.btn_port_refresh = QPushButton("↺")
-        self.btn_port_refresh.setFixedSize(30, 28)
-        self.led_serial = StatusLED(16)
+        # ── Selector de modo ──────────────────────────────────────────────
+        self.radio_serial = QRadioButton("🔌  USB Serial")
+        self.radio_wifi   = QRadioButton("📡  WiFi TCP")
+        self.radio_serial.setChecked(True)
+        self.radio_serial.setStyleSheet(RADIO_CSS)
+        self.radio_wifi.setStyleSheet(RADIO_CSS)
 
-        row_port = QHBoxLayout()
-        row_port.addWidget(self.combo_port)
-        row_port.addWidget(self.btn_port_refresh)
-        row_port.addWidget(self.led_serial)
-        lay.addRow("Puerto COM:", row_port)
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.addButton(self.radio_serial, 0)
+        self._mode_group.addButton(self.radio_wifi,   1)
 
-        self.combo_baud = QComboBox()
-        self.combo_baud.addItems(SerialManager.BAUDRATES)
-        self.combo_baud.setCurrentText("115200")
-        lay.addRow("Baudrate:", self.combo_baud)
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(16)
+        mode_row.addWidget(self.radio_serial)
+        mode_row.addWidget(self.radio_wifi)
+        mode_row.addStretch()
+        root.addLayout(mode_row)
 
-        self.btn_ser_connect    = QPushButton("▶  Conectar ESP32")
-        self.btn_ser_connect.setStyleSheet(BTN_GREEN)
-        self.btn_ser_disconnect = QPushButton("■  Desconectar")
-        self.btn_ser_disconnect.setEnabled(False)
+        # ── Separador fino ────────────────────────────────────────────────
+        sep0 = QFrame(); sep0.setFrameShape(QFrame.HLine)
+        sep0.setStyleSheet("color:#21262d;"); root.addWidget(sep0)
 
-        row_ser = QHBoxLayout()
-        row_ser.addWidget(self.btn_ser_connect)
-        row_ser.addWidget(self.btn_ser_disconnect)
-        lay.addRow("", row_ser)
+        # ── Stack: Página 0 = Serial, Página 1 = WiFi ─────────────────────
+        self.stack_conn = QStackedWidget()
+        self.stack_conn.addWidget(self._build_serial_page())
+        self.stack_conn.addWidget(self._build_wifi_page())
+        root.addWidget(self.stack_conn)
 
-        self.label_serial_status = QLabel("Desconectado")
-        self.label_serial_status.setStyleSheet("color:#555; font-size:11px;")
-        lay.addRow("Estado:", self.label_serial_status)
+        # ── LED + estado (compartido) ─────────────────────────────────────
+        sep1 = QFrame(); sep1.setFrameShape(QFrame.HLine)
+        sep1.setStyleSheet("color:#21262d;"); root.addWidget(sep1)
 
-        # Separador
-        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color:#21262d;"); lay.addRow(sep)
+        self.led_conn          = StatusLED(16)
+        self.label_conn_status = QLabel("Desconectado")
+        self.label_conn_status.setStyleSheet("color:#555; font-size:11px;")
 
-        # Comando manual
+        status_row = QHBoxLayout()
+        status_row.addWidget(QLabel("Estado:"))
+        status_row.addWidget(self.led_conn)
+        status_row.addWidget(self.label_conn_status, stretch=1)
+        root.addLayout(status_row)
+
+        # ── Separador ─────────────────────────────────────────────────────
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet("color:#21262d;"); root.addWidget(sep2)
+
+        # ── Comando manual (compartido) ───────────────────────────────────
         self.input_cmd = QLineEdit()
         self.input_cmd.setPlaceholderText("Ej: BELT:START  o  STATUS")
         self.btn_send  = QPushButton("Enviar")
         self.btn_send.setEnabled(False)
+
+        cmd_form = QFormLayout()
+        cmd_form.setSpacing(8)
+        cmd_form.setLabelAlignment(Qt.AlignRight)
         row_cmd = QHBoxLayout()
         row_cmd.addWidget(self.input_cmd)
         row_cmd.addWidget(self.btn_send)
-        lay.addRow("Comando:", row_cmd)
+        cmd_form.addRow("Comando:", row_cmd)
+        root.addLayout(cmd_form)
 
-        # Log
+        # ── Log (compartido) ──────────────────────────────────────────────
         self.serial_log = QTextEdit()
         self.serial_log.setReadOnly(True)
         self.serial_log.setMaximumHeight(150)
@@ -178,15 +189,96 @@ class ConfigTab(QWidget):
                 border:1px solid #21262d; border-radius:4px;
             }
         """)
-        lay.addRow("Log:", self.serial_log)
+        root.addWidget(self.serial_log)
 
         self.btn_clear_log = QPushButton("Limpiar log")
         self.btn_clear_log.setFixedHeight(22)
         self.btn_clear_log.clicked.connect(self.serial_log.clear)
-        lay.addRow("", self.btn_clear_log)
+        root.addWidget(self.btn_clear_log, alignment=Qt.AlignRight)
+
         return g
 
-    # ── Grupo Tabla de Precios (GUAPETÓN) ─────────────────────────────────
+    def _build_serial_page(self) -> QWidget:
+        """Página 0 del stack: configuración USB Serial."""
+        page = QWidget()
+        lay  = QFormLayout(page)
+        lay.setSpacing(8)
+        lay.setContentsMargins(0, 4, 0, 4)
+        lay.setLabelAlignment(Qt.AlignRight)
+
+        # Puerto COM
+        self.combo_port = QComboBox()
+        self.combo_port.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.btn_port_refresh = QPushButton("↺")
+        self.btn_port_refresh.setFixedSize(30, 28)
+        self.btn_port_refresh.setToolTip("Refrescar puertos")
+
+        row_port = QHBoxLayout()
+        row_port.addWidget(self.combo_port)
+        row_port.addWidget(self.btn_port_refresh)
+        lay.addRow("Puerto COM:", row_port)
+
+        # Baudrate
+        self.combo_baud = QComboBox()
+        self.combo_baud.addItems(SerialManager.BAUDRATES)
+        self.combo_baud.setCurrentText("115200")
+        lay.addRow("Baudrate:", self.combo_baud)
+
+        # Botones
+        self.btn_ser_connect    = QPushButton("▶  Conectar USB")
+        self.btn_ser_connect.setStyleSheet(BTN_GREEN)
+        self.btn_ser_disconnect = QPushButton("■  Desconectar")
+        self.btn_ser_disconnect.setEnabled(False)
+
+        row_ser = QHBoxLayout()
+        row_ser.addWidget(self.btn_ser_connect)
+        row_ser.addWidget(self.btn_ser_disconnect)
+        lay.addRow("", row_ser)
+
+        return page
+
+    def _build_wifi_page(self) -> QWidget:
+        """Página 1 del stack: configuración WiFi TCP."""
+        page = QWidget()
+        lay  = QFormLayout(page)
+        lay.setSpacing(8)
+        lay.setContentsMargins(0, 4, 0, 4)
+        lay.setLabelAlignment(Qt.AlignRight)
+
+        # IP
+        self.input_wifi_ip = QLineEdit()
+        self.input_wifi_ip.setPlaceholderText("192.168.x.x")
+        self.input_wifi_ip.setStyleSheet(INPUT_CSS)
+        lay.addRow("IP ESP32:", self.input_wifi_ip)
+
+        # Puerto TCP
+        self.input_wifi_port = QLineEdit("8888")
+        self.input_wifi_port.setValidator(QIntValidator(1, 65535))
+        self.input_wifi_port.setFixedWidth(70)
+        self.input_wifi_port.setStyleSheet(INPUT_CSS)
+        lay.addRow("Puerto TCP:", self.input_wifi_port)
+
+        # Hint
+        hint = QLabel("💡 Ver IP en el Monitor Serial del ESP32 (STATUS)")
+        hint.setStyleSheet("color:#8b949e; font-size:10px; font-style:italic;")
+        hint.setWordWrap(True)
+        lay.addRow("", hint)
+
+        # Botones
+        self.btn_wifi_connect    = QPushButton("▶  Conectar WiFi")
+        self.btn_wifi_connect.setStyleSheet(BTN_BLUE)
+        self.btn_wifi_disconnect = QPushButton("■  Desconectar")
+        self.btn_wifi_disconnect.setEnabled(False)
+
+        row_wifi = QHBoxLayout()
+        row_wifi.addWidget(self.btn_wifi_connect)
+        row_wifi.addWidget(self.btn_wifi_disconnect)
+        lay.addRow("", row_wifi)
+
+        return page
+
+    # ── Grupo Tabla de Precios ────────────────────────────────────────────
     def _build_pricing_group(self) -> QGroupBox:
         g = QGroupBox("💰  Tabla de Clases y Valorización (Solo lectura)")
         g.setStyleSheet(GROUP_STYLE)
@@ -195,23 +287,20 @@ class ConfigTab(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["Tipo", "Marca", "Tamaño", "Estado", "Precio ($)"])
-        
-        # ── Cirugía Estética ──
-        self.table.verticalHeader().setVisible(False) # Adiós a los números feos de la izquierda
+        self.table.verticalHeader().setVisible(False)
         self.table.setFrameShape(QFrame.NoFrame)
-        self.table.setSelectionMode(QTableWidget.NoSelection) # Evita que se vea feo si haces clic
+        self.table.setSelectionMode(QTableWidget.NoSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
 
-        # Ajuste de tamaño de columnas
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents) # Precio ajustado al texto
-        
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+
         self.table.setStyleSheet("""
             QTableWidget {
                 background-color: #0d1117;
-                alternate-background-color: #161b22; /* El secreto para un dark mode hermoso */
+                alternate-background-color: #161b22;
                 color: #c9d1d9;
                 gridline-color: #21262d;
                 border: 1px solid #30363d;
@@ -227,91 +316,88 @@ class ConfigTab(QWidget):
                 border-right: 1px solid #21262d;
                 padding: 6px;
             }
-            QHeaderView::section:last {
-                border-right: none;
-            }
-            QTableWidget::item {
-                padding: 4px 8px;
-                border-bottom: 1px solid #161b22;
-            }
+            QHeaderView::section:last { border-right: none; }
+            QTableWidget::item { padding: 4px 8px; border-bottom: 1px solid #161b22; }
         """)
 
-        # ── Cargar reglas desde pipeline_config.json ──
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         config_path = os.path.join(base_dir, "pipeline_config.json")
-        
         rules = []
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
+                cfg   = json.load(f)
                 rules = cfg.get("valuation", {}).get("rules", [])
         except Exception:
             pass
 
         self.table.setRowCount(len(rules))
         for row, rule in enumerate(rules):
-            # Formateador de celdas
-            def _mk_item(text):
+            def _mk(text):
                 it = QTableWidgetItem(text)
                 if text == "*":
-                    it.setForeground(QColor("#6e7681")) # Gris sutil para los comodines
+                    it.setForeground(QColor("#6e7681"))
                     it.setTextAlignment(Qt.AlignCenter)
                 else:
                     it.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 return it
 
-            self.table.setItem(row, 0, _mk_item(rule.get("type", "*")))
-            self.table.setItem(row, 1, _mk_item(rule.get("brand", "*")))
-            self.table.setItem(row, 2, _mk_item(rule.get("size", "*")))
-            self.table.setItem(row, 3, _mk_item(rule.get("condition", "*")))
-            
-            # Formateador del Precio
-            price_val = rule.get("price_mxn", 0.0)
+            self.table.setItem(row, 0, _mk(rule.get("type",      "*")))
+            self.table.setItem(row, 1, _mk(rule.get("brand",     "*")))
+            self.table.setItem(row, 2, _mk(rule.get("size",      "*")))
+            self.table.setItem(row, 3, _mk(rule.get("condition", "*")))
+
+            price_val  = rule.get("price_mxn", 0.0)
             price_item = QTableWidgetItem(f"${price_val:.2f}")
             price_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            price_item.setForeground(QColor("#3fb950") if price_val > 0 else QColor("#f85149")) # Verde GitHub y Rojo GitHub
-            
-            font = QFont()
-            font.setBold(True)
-            price_item.setFont(font)
-            
+            price_item.setForeground(QColor("#3fb950" if price_val > 0 else "#f85149"))
+            font = QFont(); font.setBold(True); price_item.setFont(font)
             self.table.setItem(row, 4, price_item)
 
         lay.addWidget(self.table)
-
-        # Mensaje informativo
-        info = QLabel("<i>Para modificar precios o clases, edita el archivo <b>pipeline_config.json</b> y reinicia la app.</i>")
-        info.setStyleSheet("color: #8b949e; font-size: 11px;")
+        info = QLabel(
+            "<i>Para modificar precios o clases, edita <b>pipeline_config.json</b> y reinicia la app.</i>"
+        )
+        info.setStyleSheet("color:#8b949e; font-size:11px;")
         lay.addWidget(info)
-
         return g
 
     # ──────────────────────────────────────────────────────────────────────
     def _connect_signals(self):
+        # ── Cámara ────────────────────────────────────────────────────────
         self.btn_cam_refresh.clicked.connect(self._scan_cameras)
         self.btn_cam_connect.clicked.connect(self._connect_camera)
         self.btn_cam_disconnect.clicked.connect(self._disconnect_camera)
         self._cam.started_ok.connect(self._on_cam_started)
         self._cam.error.connect(self._on_cam_error)
 
+        # ── Modo ──────────────────────────────────────────────────────────
+        self.radio_serial.toggled.connect(self._on_mode_toggled)
+
+        # ── Serial ────────────────────────────────────────────────────────
         self.btn_port_refresh.clicked.connect(self._refresh_ports)
         self.btn_ser_connect.clicked.connect(self._connect_serial)
         self.btn_ser_disconnect.clicked.connect(self._disconnect_serial)
+
+        # ── WiFi ──────────────────────────────────────────────────────────
+        self.btn_wifi_connect.clicked.connect(self._connect_wifi)
+        self.btn_wifi_disconnect.clicked.connect(self._disconnect_wifi)
+
+        # ── Comando + log ─────────────────────────────────────────────────
         self.btn_send.clicked.connect(self._send_command)
         self.input_cmd.returnPressed.connect(self._send_command)
 
-        self._serial.status_changed.connect(self._on_serial_status)
-        self._serial.data_received.connect(self._on_serial_rx)
-        self._serial.connected.connect(self._on_serial_connected)
+        # ── ConnectionManager (reenvía solo desde el manager activo) ──────
+        self._conn.status_changed.connect(self._on_conn_status)
+        self._conn.data_received.connect(self._on_conn_rx)
+        self._conn.connected.connect(self._on_conn_connected)
 
         self._refresh_ports()
 
-    # ── Escaneo de cámaras (async) ────────────────────────────────────────
+    # ── Escaneo de cámaras ────────────────────────────────────────────────
     def _scan_cameras(self):
         self.label_scan.setText("Escaneando dispositivos…")
         self.btn_cam_refresh.setEnabled(False)
         self.combo_cam.clear()
-
         self._scan_thread = _CamScanThread()
         self._scan_thread.done.connect(self._on_scan_done)
         self._scan_thread.start()
@@ -366,6 +452,13 @@ class ConfigTab(QWidget):
         self.label_cam_status.setText(f"❌  {msg}")
         self.label_cam_status.setStyleSheet("color:#ff4757; font-size:11px;")
 
+    # ── Modo Serial / WiFi ────────────────────────────────────────────────
+    def _on_mode_toggled(self, serial_checked: bool):
+        mode = ConnectionManager.MODE_SERIAL if serial_checked else ConnectionManager.MODE_WIFI
+        self._conn.set_mode(mode)
+        self.stack_conn.setCurrentIndex(0 if serial_checked else 1)
+        self._log(f"[Modo] {'USB Serial' if serial_checked else 'WiFi TCP'}")
+
     # ── Serial ────────────────────────────────────────────────────────────
     def _refresh_ports(self):
         self.combo_port.clear()
@@ -373,35 +466,67 @@ class ConfigTab(QWidget):
         self.combo_port.addItems(ports if ports else ["(sin puertos)"])
 
     def _connect_serial(self):
-        self._serial.connect(
+        self._conn.serial.connect(
             self.combo_port.currentText(),
             int(self.combo_baud.currentText())
         )
 
     def _disconnect_serial(self):
-        self._serial.disconnect()
+        self._conn.serial.disconnect()
 
+    # ── WiFi ──────────────────────────────────────────────────────────────
+    def _connect_wifi(self):
+        host = self.input_wifi_ip.text().strip()
+        if not host:
+            self._log("⚠️ Ingresa la IP del ESP32")
+            return
+        try:
+            port = int(self.input_wifi_port.text().strip())
+        except ValueError:
+            port = 8888
+        self._conn.wifi.connect(host, port)
+
+    def _disconnect_wifi(self):
+        self._conn.wifi.disconnect()
+
+    # ── Comando + log ─────────────────────────────────────────────────────
     def _send_command(self):
         cmd = self.input_cmd.text().strip()
         if cmd:
-            ok = self._serial.send(cmd)
+            ok = self._conn.send(cmd)
             self._log(f"{'→' if ok else '✗'} {cmd}")
             self.input_cmd.clear()
 
-    def _on_serial_status(self, msg: str):
-        self.label_serial_status.setText(msg)
-        color = "#00d4aa" if "✅" in msg else "#ff4757" if "❌" in msg else "#555"
-        self.label_serial_status.setStyleSheet(f"color:{color}; font-size:11px;")
+    # ── Slots del ConnectionManager ───────────────────────────────────────
+    def _on_conn_status(self, msg: str):
+        self.label_conn_status.setText(msg)
+        if "✅" in msg:
+            color = "#00d4aa"
+        elif "❌" in msg:
+            color = "#ff4757"
+        elif "⚠️" in msg:
+            color = "#ffa500"
+        elif "🔄" in msg:
+            color = "#58a6ff"
+        else:
+            color = "#555"
+        self.label_conn_status.setStyleSheet(f"color:{color}; font-size:11px;")
         self._log(f"[SYS] {msg}")
 
-    def _on_serial_rx(self, data: str):
+    def _on_conn_rx(self, data: str):
         self._log(f"← {data}")
 
-    def _on_serial_connected(self, ok: bool):
-        self.led_serial.set_ok() if ok else self.led_serial.set_error()
-        self.btn_ser_connect.setEnabled(not ok)
-        self.btn_ser_disconnect.setEnabled(ok)
+    def _on_conn_connected(self, ok: bool):
+        self.led_conn.set_ok() if ok else self.led_conn.set_idle()
         self.btn_send.setEnabled(ok)
+
+        # Actualizar botones del modo activo
+        if self._conn.mode == ConnectionManager.MODE_SERIAL:
+            self.btn_ser_connect.setEnabled(not ok)
+            self.btn_ser_disconnect.setEnabled(ok)
+        else:
+            self.btn_wifi_connect.setEnabled(not ok)
+            self.btn_wifi_disconnect.setEnabled(ok)
 
     def _log(self, text: str):
         self.serial_log.append(text)
@@ -420,7 +545,38 @@ QGroupBox {
 QGroupBox::title { subcontrol-origin:margin; left:12px; padding:0 6px; }
 """
 BTN_GREEN = """
-QPushButton { background:#196c2e; color:#fff; border-radius:5px; font-weight:bold; padding:5px 10px; }
-QPushButton:hover { background:#238636; }
+QPushButton {
+    background:#196c2e; color:#fff; border-radius:5px;
+    font-weight:bold; padding:5px 10px;
+}
+QPushButton:hover    { background:#238636; }
 QPushButton:disabled { background:#21262d; color:#484f58; }
+"""
+BTN_BLUE = """
+QPushButton {
+    background:#0d419d; color:#fff; border-radius:5px;
+    font-weight:bold; padding:5px 10px;
+}
+QPushButton:hover    { background:#1158c7; }
+QPushButton:disabled { background:#21262d; color:#484f58; }
+"""
+RADIO_CSS = """
+QRadioButton {
+    color:#c9d1d9; font-size:13px; font-weight:bold; spacing:6px;
+}
+QRadioButton::indicator {
+    width:16px; height:16px;
+    border-radius:8px; border:2px solid #30363d;
+    background:#0d1117;
+}
+QRadioButton::indicator:checked  { background:#1158c7; border-color:#58a6ff; }
+QRadioButton::indicator:hover    { border-color:#8b949e; }
+"""
+INPUT_CSS = """
+QLineEdit {
+    background:#161b22; color:#c9d1d9;
+    border:1px solid #30363d; border-radius:4px;
+    font-size:13px; padding:3px 8px;
+}
+QLineEdit:focus { border-color:#58a6ff; }
 """

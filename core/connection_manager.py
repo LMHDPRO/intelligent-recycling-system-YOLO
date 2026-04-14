@@ -1,18 +1,30 @@
 """
-ConnectionManager — abstracción sobre SerialManager y WiFiManager.
+core/connection_manager.py
+===========================
+Fachada que unifica SerialManager y WiFiManager en una sola interfaz.
 
-Expone exactamente las mismas señales y métodos que SerialManager,
-enrutando internamente al manager activo (serial USB o WiFi TCP).
+La UI solo habla con ConnectionManager — no necesita saber si el ESP32
+está conectado por USB o por red WiFi. Basta con llamar a:
 
-Uso en main.py — reemplaza la instancia de SerialManager:
-    conn = ConnectionManager()
-    # Pasar conn donde antes iba serial_manager
+    cm = ConnectionManager()
+    cm.connect_serial("COM3", 115200)   # o
+    cm.connect_wifi("192.168.1.100")
 
-ConfigTab accede a conn.serial y conn.wifi directamente para
-configurar cada modo por separado.
+    cm.belt_start()          # funciona igual en ambos modos
+    cm.led_green()           # ídem
+    cm.emergency_stop()      # ídem
+
+    cm.disconnect()
+
+Señales re-emitidas (idénticas a SerialManager / WiFiManager):
+    status_changed(str)
+    data_received(str)
+    us_data(int, int)
+    event_received(str)
+    connected(bool)
+    mode_changed(str)        # "serial" | "wifi" | "none"
 """
 from PySide6.QtCore import QObject, Signal
-
 from core.serial_manager import SerialManager
 from core.wifi_manager   import WiFiManager
 
@@ -20,139 +32,170 @@ from core.wifi_manager   import WiFiManager
 # ─────────────────────────────────────────────────────────────────────────
 class ConnectionManager(QObject):
     """
-    Facade que hace transparente la elección Serial USB / WiFi TCP
-    para el resto de la aplicación (DetectionTab, etc.).
+    Fachada única para SerialManager y WiFiManager.
 
-    Señales idénticas a SerialManager — el resto del código no cambia.
+    Uso desde MainWindow:
+        self._conn = ConnectionManager()
+        # Pasar self._conn a DetectionTab y ConfigTab en lugar de
+        # SerialManager directamente.
     """
 
-    status_changed = Signal(str)          # mensaje de estado
-    data_received  = Signal(str)          # línea recibida (filtrada, sin US)
-    us_data        = Signal(int, int)     # US1 cm, US2 cm
-    event_received = Signal(str)          # eventos del firmware
-    connected      = Signal(bool)         # True / False
-
-    BAUDRATES = SerialManager.BAUDRATES   # compatibilidad con ConfigTab
-
-    MODE_SERIAL = "serial"
-    MODE_WIFI   = "wifi"
+    status_changed = Signal(str)
+    data_received  = Signal(str)
+    us_data        = Signal(int, int)
+    event_received = Signal(str)
+    connected      = Signal(bool)
+    mode_changed   = Signal(str)    # "serial" | "wifi" | "none"
 
     def __init__(self):
         super().__init__()
-        self.serial = SerialManager()
-        self.wifi   = WiFiManager()
-        self._mode  = self.MODE_SERIAL
+        self._serial  = SerialManager()
+        self._wifi    = WiFiManager()
+        self._active  = None          # instancia activa (serial o wifi)
+        self._mode    = "none"
+        self._wire(self._serial)
+        self._wire(self._wifi)
 
-        # ── Forwarding de Serial (solo cuando modo == serial) ─────────────
-        self.serial.status_changed.connect(self._s_status)
-        self.serial.data_received.connect(self._s_data)
-        self.serial.us_data.connect(self._s_us)
-        self.serial.event_received.connect(self._s_event)
-        self.serial.connected.connect(self._s_connected)
+    # ── Conexión serial ───────────────────────────────────────────────────
+    def connect_serial(self, port: str, baudrate: int) -> bool:
+        self._disconnect_current()
+        ok = self._serial.connect(port, baudrate)
+        if ok:
+            self._active = self._serial
+            self._mode   = "serial"
+            self.mode_changed.emit("serial")
+        return ok
 
-        # ── Forwarding de WiFi (solo cuando modo == wifi) ─────────────────
-        self.wifi.status_changed.connect(self._w_status)
-        self.wifi.data_received.connect(self._w_data)
-        self.wifi.us_data.connect(self._w_us)
-        self.wifi.event_received.connect(self._w_event)
-        self.wifi.connected.connect(self._w_connected)
+    # ── Conexión WiFi ─────────────────────────────────────────────────────
+    def connect_wifi(self, host: str, port: int = WiFiManager.DEFAULT_PORT) -> bool:
+        self._disconnect_current()
+        ok = self._wifi.connect(host, port)
+        if ok:
+            self._active = self._wifi
+            self._mode   = "wifi"
+            self.mode_changed.emit("wifi")
+        return ok
 
-    # ── Slots de forwarding condicional ───────────────────────────────────
-    # Cada señal solo se propaga si el manager que la emitió es el activo.
+    # ── Desconexión ───────────────────────────────────────────────────────
+    def disconnect(self):
+        self._disconnect_current()
 
-    def _s_status(self, m: str):
-        if self._mode == self.MODE_SERIAL:
-            self.status_changed.emit(m)
+    def _disconnect_current(self):
+        if self._active is not None:
+            self._active.disconnect()
+        self._active = None
+        self._mode   = "none"
+        self.mode_changed.emit("none")
 
-    def _s_data(self, d: str):
-        if self._mode == self.MODE_SERIAL:
-            self.data_received.emit(d)
-
-    def _s_us(self, a: int, b: int):
-        if self._mode == self.MODE_SERIAL:
-            self.us_data.emit(a, b)
-
-    def _s_event(self, e: str):
-        if self._mode == self.MODE_SERIAL:
-            self.event_received.emit(e)
-
-    def _s_connected(self, ok: bool):
-        if self._mode == self.MODE_SERIAL:
-            self.connected.emit(ok)
-
-    def _w_status(self, m: str):
-        if self._mode == self.MODE_WIFI:
-            self.status_changed.emit(m)
-
-    def _w_data(self, d: str):
-        if self._mode == self.MODE_WIFI:
-            self.data_received.emit(d)
-
-    def _w_us(self, a: int, b: int):
-        if self._mode == self.MODE_WIFI:
-            self.us_data.emit(a, b)
-
-    def _w_event(self, e: str):
-        if self._mode == self.MODE_WIFI:
-            self.event_received.emit(e)
-
-    def _w_connected(self, ok: bool):
-        if self._mode == self.MODE_WIFI:
-            self.connected.emit(ok)
-
-    # ── Gestión de modo ───────────────────────────────────────────────────
-    @property
-    def mode(self) -> str:
-        return self._mode
-
-    def set_mode(self, mode: str):
-        """
-        Cambia el modo activo ('serial' o 'wifi').
-        Desconecta el manager anterior si estaba conectado.
-        """
-        if mode not in (self.MODE_SERIAL, self.MODE_WIFI):
-            return
-        if mode == self._mode:
-            return
-
-        # Desconectar manager anterior ANTES de cambiar _mode,
-        # para que los forwarding slots lo ignoren correctamente.
-        old = self._active()
-        self._mode = mode
-        old.disconnect()
-
-        label = "USB Serial" if mode == self.MODE_SERIAL else "WiFi TCP"
-        self.status_changed.emit(f"🔄 Modo: {label}")
-        self.connected.emit(False)
-
-    # ── Manager activo ────────────────────────────────────────────────────
-    def _active(self) -> SerialManager | WiFiManager:
-        return self.serial if self._mode == self.MODE_SERIAL else self.wifi
-
-    # ── Estado de conexión ────────────────────────────────────────────────
     @property
     def is_connected(self) -> bool:
-        return self._active().is_connected
+        return self._active is not None and self._active.is_connected
+
+    @property
+    def mode(self) -> str:
+        """'serial' | 'wifi' | 'none'"""
+        return self._mode
 
     # ── Envío raw ─────────────────────────────────────────────────────────
     def send(self, command: str) -> bool:
-        return self._active().send(command)
+        if self._active:
+            return self._active.send(command)
+        return False
 
-    # ── API de alto nivel (delega al manager activo) ──────────────────────
-    def belt_start(self):               self._active().belt_start()
-    def belt_stop(self):                self._active().belt_stop()
-    def belt_speed(self, v: int):       self._active().belt_speed(v)
+    def send_raw(self, command: str) -> bool:
+        return self.send(command)
 
-    def sort(self, cls_id: int):        self._active().sort(cls_id)
-    def sort_home(self):                self._active().sort_home()
+    # ── API completa (espejo de ambos managers) ───────────────────────────
+
+    # Banda
+    def belt_start(self):
+        if self._active: self._active.belt_start()
+
+    def belt_stop(self):
+        if self._active: self._active.belt_stop()
+
+    def belt_speed(self, v: int):
+        if self._active: self._active.belt_speed(v)
+
+    def belt_hold_on(self):
+        if self._active: self._active.belt_hold_on()
+
+    def belt_hold_off(self):
+        if self._active: self._active.belt_hold_off()
+
+    def belt_status(self):
+        if self._active: self._active.belt_status()
+
+    # Ultrasónicos
+    def us_set_threshold(self, sensor: int, cm: int):
+        if self._active: self._active.us_set_threshold(sensor, cm)
+
+    def us_auto_on(self):
+        if self._active: self._active.us_auto_on()
+
+    def us_auto_off(self):
+        if self._active: self._active.us_auto_off()
+
+    def us_get(self):
+        if self._active: self._active.us_get()
+
+    # Sorting
+    def sort(self, cls_id: int):
+        if self._active: self._active.sort(cls_id)
+
+    def sort_home(self):
+        if self._active: self._active.sort_home()
+
     def set_sort_pos(self, cls: int, steps: int):
-        self._active().set_sort_pos(cls, steps)
+        if self._active: self._active.set_sort_pos(cls, steps)
 
-    def servo1_open(self):              self._active().servo1_open()
-    def servo1_close(self):             self._active().servo1_close()
-    def servo2_open(self):              self._active().servo2_open()
-    def servo2_close(self):             self._active().servo2_close()
+    # Servos
+    def servo1_open(self):   self._safe("servo1_open")
+    def servo1_close(self):  self._safe("servo1_close")
+    def servo2_open(self):   self._safe("servo2_open")
+    def servo2_close(self):  self._safe("servo2_close")
 
-    def emergency_stop(self):           self._active().emergency_stop()
-    def reset(self):                    self._active().reset()
-    def request_status(self):           self._active().request_status()
+    # LEDs
+    def led_green(self):     self._safe("led_green")
+    def led_red(self):       self._safe("led_red")
+    def led_off(self):       self._safe("led_off")
+
+    # Sistema
+    def emergency_stop(self):
+        if self._active: self._active.emergency_stop()
+
+    def reset(self):
+        if self._active: self._active.reset()
+
+    def request_status(self):
+        if self._active: self._active.request_status()
+
+    # ── Acceso directo a los managers subyacentes ─────────────────────────
+    @property
+    def serial(self) -> SerialManager:
+        return self._serial
+
+    @property
+    def wifi(self) -> WiFiManager:
+        return self._wifi
+
+    # ── Helpers privados ──────────────────────────────────────────────────
+    def _safe(self, method: str):
+        """Llama un método por nombre si hay conexión activa."""
+        if self._active:
+            getattr(self._active, method)()
+
+    def _wire(self, mgr):
+        """Conecta las señales de un manager a las de esta fachada."""
+        mgr.status_changed.connect(self.status_changed)
+        mgr.data_received.connect(self.data_received)
+        mgr.us_data.connect(self.us_data)
+        mgr.event_received.connect(self.event_received)
+        mgr.connected.connect(self.connected)
+
+    # ── Puertos disponibles (Serial) ──────────────────────────────────────
+    @staticmethod
+    def list_ports() -> list[str]:
+        return SerialManager.list_ports()
+
+    BAUDRATES = SerialManager.BAUDRATES

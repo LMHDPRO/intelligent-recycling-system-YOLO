@@ -1,10 +1,16 @@
 """
 WiFiManager — cliente TCP para ESP32 con WiFi.
-Expone las mismas señales y métodos que SerialManager para
+Expone exactamente las mismas señales y métodos que SerialManager para
 intercambio transparente vía ConnectionManager.
 
 Puerto TCP por defecto: 8888
 El ESP32 usa el mismo protocolo de texto que Serial (comandos + '\\n').
+
+FIXES vs versión anterior:
+  • US parser usa ',' como separador (igual que firmware y SerialManager)
+    "US:45,32"  ← correcto   (antes usaba "US:45:32" ← incorrecto)
+  • API completa: belt_hold_on/off, belt_status, us_set_threshold,
+    us_auto_on/off, us_get, led_green, led_red, led_off
 """
 import socket
 from typing import Optional
@@ -17,7 +23,7 @@ class _TCPReader(QThread):
 
     data_received   = Signal(str)
     us_data         = Signal(int, int)   # US1 cm, US2 cm
-    event_received  = Signal(str)        # OBJ_AT_CAM, OBJ_ENTRY, TIMEOUT…
+    event_received  = Signal(str)
     connection_lost = Signal()
 
     def __init__(self, sock: socket.socket):
@@ -33,7 +39,6 @@ class _TCPReader(QThread):
             try:
                 chunk = self._sock.recv(256)
                 if not chunk:
-                    # El servidor cerró la conexión
                     if self._running:
                         self.connection_lost.emit()
                     break
@@ -45,15 +50,17 @@ class _TCPReader(QThread):
                     if not line:
                         continue
 
-                    # Parsear US data (no saturar el log UI)
-                    if line.startswith("US:"):
-                        parts = line.split(":")
-                        if len(parts) == 3:
+                    # ── US:<d1>,<d2>  — MISMO formato que SerialManager ──
+                    # FIX: el firmware envía "US:45,32" (coma), NO "US:45:32"
+                    if line.startswith("US:") and "," in line:
+                        payload = line[3:]          # "45,32"
+                        parts   = payload.split(",")
+                        if len(parts) == 2:
                             try:
-                                self.us_data.emit(int(parts[1]), int(parts[2]))
+                                self.us_data.emit(int(parts[0]), int(parts[1]))
                             except ValueError:
                                 pass
-                        continue
+                        continue   # no reenviar al log general
 
                     if line.startswith("EVENT:"):
                         self.event_received.emit(line[6:])
@@ -67,7 +74,6 @@ class _TCPReader(QThread):
 
     def stop(self):
         self._running = False
-        # Cerrar socket para desbloquear recv()
         try:
             self._sock.shutdown(socket.SHUT_RDWR)
         except Exception:
@@ -80,18 +86,15 @@ class WiFiManager(QObject):
     """
     Gestor de conexión TCP al ESP32 vía WiFi (red local).
 
-    Uso básico:
-        mgr = WiFiManager()
-        mgr.connect("192.168.1.100", 8888)
-        mgr.belt_start()
-        mgr.disconnect()
+    Señales idénticas a SerialManager → intercambio transparente
+    a través de ConnectionManager.
     """
 
-    status_changed = Signal(str)          # mensaje de estado
-    data_received  = Signal(str)          # línea recibida (filtrada, sin US)
-    us_data        = Signal(int, int)     # US1 cm, US2 cm
-    event_received = Signal(str)          # eventos del firmware
-    connected      = Signal(bool)         # True / False
+    status_changed = Signal(str)
+    data_received  = Signal(str)
+    us_data        = Signal(int, int)
+    event_received = Signal(str)
+    connected      = Signal(bool)
 
     DEFAULT_PORT = 8888
 
@@ -100,7 +103,7 @@ class WiFiManager(QObject):
         self._sock:   Optional[socket.socket] = None
         self._reader: Optional[_TCPReader]    = None
 
-    # ── Conexión ─────────────────────────────────────────────────────────
+    # ── Conexión / desconexión ────────────────────────────────────────────
     def connect(self, host: str, port: int = DEFAULT_PORT) -> bool:
         host = host.strip()
         if not host:
@@ -109,9 +112,9 @@ class WiFiManager(QObject):
             return False
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(3.0)          # timeout solo en connect()
+            s.settimeout(3.0)
             s.connect((host, port))
-            s.settimeout(None)         # bloqueante para el reader
+            s.settimeout(None)
 
             self._sock   = s
             self._reader = _TCPReader(self._sock)
@@ -128,7 +131,7 @@ class WiFiManager(QObject):
         except ConnectionRefusedError:
             msg = f"❌ WiFi: conexión rechazada  {host}:{port}"
         except TimeoutError:
-            msg = f"❌ WiFi: timeout al conectar  {host}:{port}"
+            msg = f"❌ WiFi: timeout  {host}:{port}"
         except Exception as e:
             msg = f"❌ WiFi: {e}"
 
@@ -151,13 +154,16 @@ class WiFiManager(QObject):
         self.connected.emit(False)
 
     def _on_lost(self):
-        """Llamado desde _TCPReader cuando el servidor cierra la conexión."""
         self._sock   = None
         self._reader = None
         self.status_changed.emit("⚠️ Conexión WiFi perdida")
         self.connected.emit(False)
 
-    # ── Envío raw ────────────────────────────────────────────────────────
+    @property
+    def is_connected(self) -> bool:
+        return self._sock is not None
+
+    # ── Envío base ────────────────────────────────────────────────────────
     def send(self, command: str) -> bool:
         if self._sock:
             try:
@@ -168,25 +174,45 @@ class WiFiManager(QObject):
                 self._on_lost()
         return False
 
-    @property
-    def is_connected(self) -> bool:
-        return self._sock is not None
+    def send_raw(self, command: str) -> bool:
+        return self.send(command)
 
-    # ── API de alto nivel (espejo de SerialManager) ───────────────────────
+    # ── API idéntica a SerialManager ──────────────────────────────────────
+
+    # Banda
     def belt_start(self):               self.send("BELT:START")
     def belt_stop(self):                self.send("BELT:STOP")
     def belt_speed(self, v: int):       self.send(f"BELT:SPEED:{v}")
+    def belt_hold_on(self):             self.send("BELT:HOLD:ON")
+    def belt_hold_off(self):            self.send("BELT:HOLD:OFF")
+    def belt_status(self):              self.send("BELT:STATUS")
 
+    # Ultrasónicos
+    def us_set_threshold(self, sensor: int, cm: int):
+        self.send(f"US:THRESH:{sensor}:{cm}")
+
+    def us_auto_on(self):               self.send("US:AUTO:ON")
+    def us_auto_off(self):              self.send("US:AUTO:OFF")
+    def us_get(self):                   self.send("US:GET")
+
+    # Sorting
     def sort(self, cls_id: int):        self.send(f"SORT:{cls_id}")
     def sort_home(self):                self.send("HOME")
     def set_sort_pos(self, cls: int, steps: int):
         self.send(f"SORT_POS:{cls}:{steps}")
 
+    # Servos
     def servo1_open(self):              self.send("SERVO1:OPEN")
     def servo1_close(self):             self.send("SERVO1:CLOSE")
     def servo2_open(self):              self.send("SERVO2:OPEN")
     def servo2_close(self):             self.send("SERVO2:CLOSE")
 
+    # LEDs de feedback (examen)
+    def led_green(self):                self.send("LED:GREEN")
+    def led_red(self):                  self.send("LED:RED")
+    def led_off(self):                  self.send("LED:OFF")
+
+    # Sistema
     def emergency_stop(self):           self.send("E_STOP")
     def reset(self):                    self.send("RESET")
-    def request_status(self):           self.send("STATUS")
+    def request_status(self):           self.send("BELT:STATUS")

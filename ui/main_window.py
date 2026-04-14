@@ -2,7 +2,7 @@
 MainWindow — ventana principal.
   • Gestiona CameraThread (único, compartido entre tabs)
   • Gestiona PipelineWorker (único, compartido, reemplaza a YOLOWorker)
-  • Gestiona SerialManager (único, compartido)
+  • Gestiona ConnectionManager (Serial USB + WiFi TCP, compartido)
   • Distribuye frames a CaptureTab y DetectionTab
   • Status bar unificado
 """
@@ -13,9 +13,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui  import QIcon, QFont
 
-from core.camera_thread   import CameraThread
-from core.pipeline_worker import PipelineWorker
-from core.serial_manager  import SerialManager
+from core.camera_thread      import CameraThread
+from core.pipeline_worker    import PipelineWorker
+from core.connection_manager import ConnectionManager   # ← CAMBIO 1
 
 from ui.capture_tab   import CaptureTab
 from ui.detection_tab import DetectionTab
@@ -29,22 +29,20 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("♻️  RecyclerVision  —  Sistema de Clasificación")
         self.setMinimumSize(1100, 720)
 
-        # ── Calcular la ruta absoluta al JSON ──
-        # Sube un nivel desde la carpeta "ui" hacia la raíz del proyecto "recycler_vision_Parcial2"
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         config_path = os.path.join(base_dir, "pipeline_config.json")
 
-        # ── Componentes core ──────────────────────────────────
+        # ── Componentes core ──────────────────────────────────────────────
         self._camera = CameraThread()
-        self._worker = PipelineWorker(config_path) # Usamos la ruta absoluta
-        self._serial = SerialManager()
+        self._worker = PipelineWorker(config_path)
+        self._conn   = ConnectionManager()             # ← CAMBIO 2
 
-        # ── Tabs ──────────────────────────────────────────────
+        # ── Tabs ──────────────────────────────────────────────────────────
         self._tab_capture   = CaptureTab()
-        self._tab_detection = DetectionTab(self._worker, self._serial)
-        self._tab_config    = ConfigTab(self._camera, self._serial)
+        self._tab_detection = DetectionTab(self._worker, self._conn)   # ← CAMBIO 3
+        self._tab_config    = ConfigTab(self._camera,   self._conn)    # ← CAMBIO 4
 
-        # ── TabWidget ─────────────────────────────────────────
+        # ── TabWidget ─────────────────────────────────────────────────────
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
         tabs.addTab(self._tab_capture,   "📸  Captura Dataset")
@@ -53,33 +51,32 @@ class MainWindow(QMainWindow):
         tabs.setStyleSheet(TAB_STYLE)
         self.setCentralWidget(tabs)
 
-        # ── Status bar ────────────────────────────────────────
-        self._status_cam    = QLabel("📷 Sin cámara")
-        self._status_serial = QLabel("🔌 Sin serial")
-        self._status_model  = QLabel("🧠 Pipeline Inicializado")
+        # ── Status bar ────────────────────────────────────────────────────
+        self._status_cam  = QLabel("📷 Sin cámara")
+        self._status_conn = QLabel("🔌 Sin conexión")
+        self._status_model = QLabel("🧠 Pipeline Inicializado")
 
-        for lbl in (self._status_cam, self._status_serial, self._status_model):
+        for lbl in (self._status_cam, self._status_conn, self._status_model):
             lbl.setStyleSheet("color:#8b949e; padding: 0 8px;")
 
         sb = QStatusBar()
         sb.addPermanentWidget(self._status_cam)
         sb.addPermanentWidget(_separator())
-        sb.addPermanentWidget(self._status_serial)
+        sb.addPermanentWidget(self._status_conn)
         sb.addPermanentWidget(_separator())
         sb.addPermanentWidget(self._status_model)
         self.setStatusBar(sb)
 
-        # ── Conexiones entre componentes ──────────────────────
         self._wire_signals()
         self._apply_theme()
 
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
     def _wire_signals(self):
         # Camera → tabs
         self._camera.frame_ready.connect(self._tab_capture.receive_frame)
         self._camera.frame_ready.connect(self._tab_detection.receive_frame)
 
-        # Config → tabs (eventos de conexión)
+        # Config → tabs (eventos de conexión de cámara)
         self._tab_config.camera_connected.connect(self._tab_capture.on_camera_connected)
         self._tab_config.camera_connected.connect(self._tab_detection.on_camera_connected)
         self._tab_config.camera_connected.connect(
@@ -90,15 +87,15 @@ class MainWindow(QMainWindow):
         self._tab_config.camera_disconnected.connect(
             lambda: self._status_cam.setText("📷 Sin cámara"))
 
-        # Serial status → status bar
-        self._serial.status_changed.connect(
-            lambda msg: self._status_serial.setText(f"🔌 {msg}"))
+        # ConnectionManager status → status bar
+        self._conn.status_changed.connect(
+            lambda msg: self._status_conn.setText(f"🔌 {msg}"))
 
         # Tab messages → status bar
         self._tab_capture.status_message.connect(self.statusBar().showMessage)
         self._tab_detection.status_message.connect(self.statusBar().showMessage)
 
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
     def _apply_theme(self):
         self.setStyleSheet(APP_THEME)
 
@@ -106,18 +103,19 @@ class MainWindow(QMainWindow):
         """Cierre limpio: detener todos los hilos."""
         self._worker.stop()
         self._camera.stop()
-        self._serial.disconnect()
+        self._conn.serial.disconnect()
+        self._conn.wifi.disconnect()
         event.accept()
 
 
-# ─── Utilidades ──────────────────────────────────────────────
+# ─── Utilidades ───────────────────────────────────────────────────────────
 def _separator() -> QLabel:
     sep = QLabel("|")
     sep.setStyleSheet("color:#30363d;")
     return sep
 
 
-# ─── Tema global (GitHub Dark inspired) ──────────────────────
+# ─── Tema global (GitHub Dark inspired) ──────────────────────────────────
 APP_THEME = """
 QMainWindow, QWidget {
     background-color: #0d1117;
@@ -168,9 +166,9 @@ QPushButton {
     border-radius: 5px;
     padding: 5px 12px;
 }
-QPushButton:hover   { background: #30363d; border-color: #8b949e; }
-QPushButton:pressed { background: #161b22; }
-QPushButton:disabled{ background: #161b22; color: #484f58; border-color: #21262d; }
+QPushButton:hover    { background: #30363d; border-color: #8b949e; }
+QPushButton:pressed  { background: #161b22; }
+QPushButton:disabled { background: #161b22; color: #484f58; border-color: #21262d; }
 QComboBox {
     background: #161b22;
     border: 1px solid #30363d;
